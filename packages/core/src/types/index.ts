@@ -140,6 +140,8 @@ export interface KeeperHubConfig {
   mode: "mock" | "live";
   endpoint?: string | undefined;
   apiKey?: string | undefined;
+  privateKey?: string | undefined;
+  rpcUrl?: string | undefined;
   policy: FirewallPolicy;
   logger?:
     | {

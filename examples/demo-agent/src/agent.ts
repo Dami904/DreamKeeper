@@ -23,5 +23,7 @@ export function createDemoExtension(mode: "mock" | "live" = "mock") {
     endpoint:
       process.env["KEEPERHUB_MCP_URL"] || "https://app.keeperhub.com/mcp",
     apiKey: process.env["KEEPERHUB_API_KEY"],
+    privateKey: process.env["PRIVATE_KEY"],
+    rpcUrl: process.env["RPC_URL"] || "https://sepolia.base.org",
   });
 }

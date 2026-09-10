@@ -17,11 +17,14 @@ async function main() {
     "==================================================================================\n",
   );
 
+  const isLive = process.argv.includes("--live");
+  const mode = isLive ? "live" : "mock";
+
   // 1. Initialize Extension & Daydreams Agent
   console.log(
-    "[Step 1] Initializing DreamKeeper extension with Base Sepolia policy...",
+    `[Step 1] Initializing DreamKeeper extension [MODE: ${mode.toUpperCase()}] with Base Sepolia policy...`,
   );
-  const extension = createDemoExtension("mock");
+  const extension = createDemoExtension(mode);
 
   console.log(
     "[Step 2] Mounting extension into native Daydreams createDreams() agent...",
@@ -103,7 +106,16 @@ async function main() {
   console.log(
     `  => Verified: Value moved on Base Sepolia! Tx: ${execRes.txHash}`,
   );
-  console.log(`  => Explorer Link: ${execRes.explorerUrl}`);
+  if (mode === "mock") {
+    console.log(
+      `  => Explorer Link: ${execRes.explorerUrl} [MOCK MODE: Offline simulation - not broadcast to public nodes]`,
+    );
+    console.log(
+      `     (To broadcast live to Base Sepolia, run with: pnpm --filter @dreamkeeper/demo-agent run test:e2e -- --live)`,
+    );
+  } else {
+    console.log(`  => Explorer Link: ${execRes.explorerUrl} [LIVE ON-CHAIN]`);
+  }
   console.log(`  => Execution Run ID: ${execRes.runId}\n`);
 
   // ACTION 3: keeperhub_reconcile (Idempotency Recovery & State Invariant)

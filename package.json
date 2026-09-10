@@ -14,12 +14,16 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,json,md}\"",
     "demo:e2e": "pnpm --filter @dreamkeeper/demo-agent run demo:e2e",
     "demo:firewall": "pnpm --filter @dreamkeeper/demo-agent run demo:firewall",
-    "live:demo": "pnpm --filter @dreamkeeper/demo-agent run live:demo"
+    "live:demo": "pnpm --filter @dreamkeeper/demo-agent run live:demo",
+    "live:e2e": "pnpm --filter @dreamkeeper/demo-agent run live:e2e",
+    "live:check-balance": "node --env-file=.env scripts/check-balance.mjs",
+    "live:wallet": "node scripts/create-wallet.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.5",
     "prettier": "^3.5.2",
     "typescript": "^5.7.3",
+    "viem": "^2.56.3",
     "vitest": "^3.0.7"
   }
 }

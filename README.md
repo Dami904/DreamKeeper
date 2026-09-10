@@ -33,7 +33,7 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 
 </div>
 
-The demo footage executes against the real `@dreamkeeper/core` state machine and firewall. In the video, watch the terminal status change from `FIREWALL_BLOCKED` to `CONFIRMED` on Base Sepolia with transaction hash `0x576d1e1dd96566cdf9749e4df5133b18d669bbee6f4bdd71ddf3f25523039f62`.
+The demo footage executes against the real `@dreamkeeper/core` state machine and firewall. In the video, watch the terminal status change from `FIREWALL_BLOCKED` to `CONFIRMED` on Base Sepolia. Note that local test and demo runs default to `mock` mode to verify offline with zero gas; live on-chain broadcast with public BaseScan indexing is enabled via `pnpm live:demo`.
 
 ---
 
@@ -205,8 +205,8 @@ flowchart TD
 
 ## Integrity: what's staged vs. real
 
-- **The Demo Script ([`run-demo.ts`](examples/demo-agent/src/run-demo.ts))**: Defaults to `mock` mode to run instantly offline on any machine. Running `pnpm --filter @dreamkeeper/demo-agent run start` uses local deterministic state simulation.
-- **Live Mode**: Passing `--live` (`pnpm --filter @dreamkeeper/demo-agent run live:demo`) switches transport to `LiveKeeperHubTransport`, sending real HTTP requests to KeeperHub and Turnkey enclaves on Base Sepolia.
+- **The Demo & Verification Scripts ([`run-demo.ts`](examples/demo-agent/src/run-demo.ts), [`test-end-to-end-full.ts`](examples/demo-agent/src/test-end-to-end-full.ts))**: Default to `mock` mode (`MockKeeperHubTransport`) so that hackathon judges, CI, and external auditors can verify 100% of state transitions, invariants, and firewall rules offline with **$0.00 spent and zero private keys**. Transaction hashes in mock mode are deterministically generated in-memory simulations and are not broadcast to public BaseScan nodes.
+- **Live Mode (`LiveKeeperHubTransport`)**: Passing `--live` (via `pnpm live:demo`) routes calls over JSON-RPC to the live KeeperHub MCP endpoint (`https://app.keeperhub.com/mcp`) and Turnkey enclaves on Base Sepolia (`chainId: 84532`), generating public on-chain transactions broadcast and indexed on BaseScan.
 
 ---
 

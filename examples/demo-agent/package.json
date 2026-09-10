@@ -11,7 +11,8 @@
     "demo:firewall": "tsx src/test-firewall.ts",
     "demo:e2e": "tsx src/test-end-to-end-full.ts",
     "test:e2e": "tsx src/test-end-to-end-full.ts",
-    "live:demo": "tsx src/run-demo.ts --live"
+    "live:demo": "tsx --env-file=../../.env src/run-demo.ts --live",
+    "live:e2e": "tsx --env-file=../../.env src/test-end-to-end-full.ts --live"
   },
   "dependencies": {
     "@daydreamsai/core": "^0.3.22",

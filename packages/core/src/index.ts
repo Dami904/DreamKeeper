@@ -13,6 +13,7 @@ export * from "./firewall/circuit-breaker.js";
 export * from "./keeperhub/transport.js";
 export * from "./keeperhub/mock-transport.js";
 export * from "./keeperhub/live-transport.js";
+export * from "./keeperhub/onchain-transport.js";
 export * from "./keeperhub/idempotency.js";
 export * from "./keeperhub/state-machine.js";
 export * from "./keeperhub/client.js";

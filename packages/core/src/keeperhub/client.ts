@@ -10,6 +10,7 @@ import type {
 import type { KeeperHubTransport } from "./transport.js";
 import { MockKeeperHubTransport } from "./mock-transport.js";
 import { LiveKeeperHubTransport } from "./live-transport.js";
+import { OnChainKeeperHubTransport } from "./onchain-transport.js";
 import { FirewallValidator } from "../firewall/validator.js";
 import { CircuitBreaker } from "../firewall/circuit-breaker.js";
 import {
@@ -48,10 +49,17 @@ export class KeeperHubClient {
     if (dependencies?.transport) {
       this.transport = dependencies.transport;
     } else if (config.mode === "live") {
-      this.transport = new LiveKeeperHubTransport({
-        endpoint: config.endpoint,
-        apiKey: config.apiKey,
-      });
+      if (config.privateKey) {
+        this.transport = new OnChainKeeperHubTransport({
+          privateKey: config.privateKey as `0x${string}`,
+          rpcUrl: config.rpcUrl,
+        });
+      } else {
+        this.transport = new LiveKeeperHubTransport({
+          endpoint: config.endpoint,
+          apiKey: config.apiKey,
+        });
+      }
     } else {
       this.transport = new MockKeeperHubTransport();
     }

@@ -73,7 +73,16 @@ async function main() {
   if (execResult.status === "CONFIRMED") {
     console.log("\n SUCCESS: Transaction mined and confirmed on Base Sepolia!");
     console.log(` Tx Hash: ${execResult.txHash}`);
-    console.log(` Explorer: ${execResult.explorerUrl}`);
+    if (mode === "mock") {
+      console.log(
+        ` Explorer: ${execResult.explorerUrl} [MOCK MODE: Offline simulation - not broadcast on-chain]`,
+      );
+      console.log(
+        `           (Run with 'pnpm live:demo' and KEEPERHUB_API_KEY for live on-chain broadcast)`,
+      );
+    } else {
+      console.log(` Explorer: ${execResult.explorerUrl} [LIVE ON-CHAIN]`);
+    }
     console.log(` Run ID: ${execResult.runId}`);
   } else {
     console.error(" Execution failed or indeterminate:", execResult);
