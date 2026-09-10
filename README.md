@@ -33,7 +33,7 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 
 </div>
 
-The demo footage executes against the real `@dreamkeeper/core` state machine and firewall. In the video, watch the terminal status change from `FIREWALL_BLOCKED` to `CONFIRMED` on Base Sepolia. Note that local test and demo runs default to `mock` mode to verify offline with zero gas; live on-chain broadcast with public BaseScan indexing is enabled via `pnpm live:demo`.
+The demo footage executes against the real `@dreamkeeper/core` state machine and firewall. In the video, watch the terminal status change from `FIREWALL_BLOCKED` to `CONFIRMED` on Base Sepolia with verified on-chain transaction hash [`0x2e682f22a99409d9a94a0cf4e4bc9ecc86cc45d79d2c26d7146b6849fac6f498`](https://sepolia.basescan.org/tx/0x2e682f22a99409d9a94a0cf4e4bc9ecc86cc45d79d2c26d7146b6849fac6f498). Note that local test and demo runs default to `mock` mode to verify offline with zero gas; live on-chain broadcast with public BaseScan indexing is enabled via `pnpm live:demo`.
 
 ---
 
