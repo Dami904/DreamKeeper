@@ -17,7 +17,9 @@
     "live:demo": "pnpm --filter @dreamkeeper/demo-agent run live:demo",
     "live:e2e": "pnpm --filter @dreamkeeper/demo-agent run live:e2e",
     "live:check-balance": "node --env-file=.env scripts/check-balance.mjs",
-    "live:wallet": "node scripts/create-wallet.mjs"
+    "live:check-vault": "node --env-file=.env scripts/check-vault-balance.mjs",
+    "live:wallet": "node scripts/create-wallet.mjs",
+    "live:vault": "node scripts/create-vault-wallet.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.5",

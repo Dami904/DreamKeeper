@@ -1,6 +1,7 @@
 import { dreamkeeperExtension, type FirewallPolicy } from "@dreamkeeper/core";
 
-export const DEMO_APPROVED_VAULT = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
+export const DEMO_APPROVED_VAULT =
+  process.env["VAULT_ADDRESS"] || "0xDd9E6DF0542A69995ABA5E6604BbDa89FfD8B2C1";
 export const DEMO_ATTACKER_ADDRESS =
   "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF";
 
