@@ -12,6 +12,7 @@
     "live:demo": "tsx src/run-demo.ts --live"
   },
   "dependencies": {
+    "@daydreamsai/core": "^0.3.22",
     "@dreamkeeper/core": "workspace:*",
     "zod": "^3.24.2"
   },

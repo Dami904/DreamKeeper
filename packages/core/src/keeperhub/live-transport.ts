@@ -76,12 +76,31 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       },
     });
 
-    const res = await this.postJson("dry-run", {
-      recipient: intent.recipient,
-      amount: intent.amount.toString(),
-      calldata: intent.calldata,
-      method: intent.method,
-    });
+    const isMcp = this.endpoint.includes("/mcp");
+    const path = isMcp ? "" : "dry-run";
+    const body = isMcp
+      ? {
+          jsonrpc: "2.0",
+          id: Date.now(),
+          method: "tools/call",
+          params: {
+            name: "execute_transfer",
+            arguments: {
+              chain_id: "84532",
+              to_address: intent.recipient,
+              amount: (Number(intent.amount) / 1e6).toString(),
+              simulate: true,
+            },
+          },
+        }
+      : {
+          recipient: intent.recipient,
+          amount: intent.amount.toString(),
+          calldata: intent.calldata,
+          method: intent.method,
+        };
+
+    const res = await this.postJson(path, body);
 
     if (res.timedOut || res.error) {
       return {
@@ -90,21 +109,32 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       };
     }
 
-    if (res.status >= 400 || !res.data?.ok) {
+    if (res.data?.error === "invalid_token") {
       return {
         ok: false,
-        revertReason: res.data?.revertReason || "SIMULATION_REVERTED",
         error:
-          res.data?.error ||
+          "KeeperHub Auth Error: Missing or invalid API key. Set KEEPERHUB_API_KEY with a valid 'kh_' bearer token to run live.",
+      };
+    }
+
+    const mcpResult = isMcp ? res.data?.result : res.data;
+
+    if (res.status >= 400 || (mcpResult && !mcpResult.ok && mcpResult.isError)) {
+      return {
+        ok: false,
+        revertReason: mcpResult?.revertReason || "SIMULATION_REVERTED",
+        error:
+          mcpResult?.error ||
+          mcpResult?.content?.[0]?.text ||
           `HTTP ${res.status}: Simulation reverted on-chain.`,
       };
     }
 
     return {
       ok: true,
-      token: res.data.token,
-      estimatedGasUnits: BigInt(res.data.estimatedGasUnits || "65000"),
-      projectedDelta: BigInt(res.data.projectedDelta || `-${intent.amount}`),
+      token: mcpResult?.token,
+      estimatedGasUnits: BigInt(mcpResult?.estimatedGasUnits || "65000"),
+      projectedDelta: BigInt(mcpResult?.projectedDelta || `-${intent.amount}`),
     };
   }
 
@@ -120,21 +150,52 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       },
     });
 
-    const res = await this.postJson("execute", {
-      idempotencyKey: intent.idempotencyKey,
-      dryRunTokenId: intent.dryRunTokenId,
-      recipient: intent.recipient,
-      amount: intent.amount.toString(),
-      calldata: intent.calldata,
-    });
+    const isMcp = this.endpoint.includes("/mcp");
+    const path = isMcp ? "" : "execute";
+    const body = isMcp
+      ? {
+          jsonrpc: "2.0",
+          id: Date.now(),
+          method: "tools/call",
+          params: {
+            name: "execute_transfer",
+            arguments: {
+              chain_id: "84532",
+              to_address: intent.recipient,
+              amount: (Number(intent.amount) / 1e6).toString(),
+              idempotency_key: intent.idempotencyKey,
+              simulate: false,
+            },
+          },
+        }
+      : {
+          idempotencyKey: intent.idempotencyKey,
+          dryRunTokenId: intent.dryRunTokenId,
+          recipient: intent.recipient,
+          amount: intent.amount.toString(),
+          calldata: intent.calldata,
+        };
+
+    const res = await this.postJson(path, body);
+
+    if (res.data?.error === "invalid_token") {
+      return {
+        state: "FAILED",
+        idempotencyKey: intent.idempotencyKey,
+        error:
+          "KeeperHub Auth Error: Missing or invalid API key. Set KEEPERHUB_API_KEY with a valid 'kh_' bearer token to run live.",
+      };
+    }
+
+    const mcpData = isMcp ? res.data?.result : res.data;
 
     const classified = ExecutionStateMachine.classifyResponse({
       statusCode: res.status,
       networkError: res.error,
       timedOut: res.timedOut,
-      txHash: res.data?.txHash,
-      revertReason: res.data?.revertReason,
-      serverMessage: res.data?.message || res.data?.error,
+      txHash: mcpData?.txHash || mcpData?.transactionHash,
+      revertReason: mcpData?.revertReason,
+      serverMessage: mcpData?.message || mcpData?.error || mcpData?.content?.[0]?.text,
     });
 
     return {

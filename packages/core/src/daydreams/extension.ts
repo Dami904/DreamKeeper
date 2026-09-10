@@ -5,7 +5,13 @@ import { createDaydreamsActions } from "./actions.js";
 export interface DreamKeeperExtension {
   name: string;
   client: KeeperHubClient;
-  actions: ReturnType<typeof createDaydreamsActions>;
+  actions: Array<{
+    name: string;
+    description: string;
+    schema: any;
+    handler: (params: any, ctx?: any) => Promise<any>;
+  }> & ReturnType<typeof createDaydreamsActions>;
+  actionsMap: ReturnType<typeof createDaydreamsActions>;
   actionsList: Array<{
     name: string;
     description: string;
@@ -22,18 +28,24 @@ export function dreamkeeperExtension(
   config: KeeperHubConfig,
 ): DreamKeeperExtension {
   const client = new KeeperHubClient(config);
-  const actions = createDaydreamsActions(client);
+  const actionsMap = createDaydreamsActions(client);
+
+  const actionsList = [
+    actionsMap.dryRunAction,
+    actionsMap.executeAction,
+    actionsMap.reconcileAction,
+    actionsMap.auditAction,
+  ];
+
+  // Make actions an array for Daydreams, while preserving named access for tests
+  const actions = Object.assign(actionsList, actionsMap);
 
   return {
     name: "dreamkeeper",
     client,
     actions,
-    actionsList: [
-      actions.dryRunAction,
-      actions.executeAction,
-      actions.reconcileAction,
-      actions.auditAction,
-    ],
+    actionsMap,
+    actionsList,
   };
 }
 
