@@ -51,11 +51,17 @@ async function main() {
   console.log(
     "----------------------------------------------------------------------------------",
   );
+  const usdcToken = isLive
+    ? process.env["USDC_ADDRESS"] ||
+      "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    : undefined;
+
   const dryRunPayload = {
     recipient: DEMO_APPROVED_VAULT,
-    amount: "12000000", // 12 USDC
-    maxBalanceLoss: "12000000",
-    maxGasUnits: "100000",
+    amount: "5000000", // 5 USDC
+    token: usdcToken,
+    maxBalanceLoss: "5000000",
+    maxGasUnits: "150000",
   };
   console.log("[Daydreams Action Call] keeperhub_dry_run:", dryRunPayload);
 
@@ -84,14 +90,15 @@ async function main() {
   const idempotencyKey = generateSemanticIdempotencyKey({
     senderId: "daydreams-orchestrator",
     recipient: DEMO_APPROVED_VAULT,
-    amount: 12_000_000n,
+    amount: 5_000_000n,
   });
 
   const execPayload = {
     idempotencyKey,
     dryRunTokenId: dryRunRes.dryRunTokenId,
     recipient: DEMO_APPROVED_VAULT,
-    amount: "12000000",
+    amount: "5000000",
+    token: usdcToken,
   };
   console.log("[Daydreams Action Call] keeperhub_execute:", execPayload);
 

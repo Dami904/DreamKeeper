@@ -84,6 +84,7 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
       recipient: intent.recipient.toLowerCase(),
       amount: intent.amount.toString(),
       calldata: intent.calldata?.toLowerCase() || "",
+      token: intent.token?.toLowerCase() || "",
     });
     const intentHash = createHash("sha256").update(canonical).digest("hex");
 

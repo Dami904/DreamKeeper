@@ -171,7 +171,16 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
     try {
       let txHash: Hash;
 
-      if (intent.calldata) {
+      if (intent.token) {
+        txHash = await this.walletClient.writeContract({
+          address: intent.token as Address,
+          abi: erc20Abi,
+          functionName: "transfer",
+          args: [intent.recipient as Address, intent.amount],
+          account: this.account,
+          chain: baseSepolia,
+        });
+      } else if (intent.calldata) {
         txHash = await this.walletClient.sendTransaction({
           to: intent.recipient as Address,
           value: intent.amount,

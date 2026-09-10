@@ -101,6 +101,7 @@ export function createDaydreamsActions(client: KeeperHubClient) {
         dryRunTokenId: args.dryRunTokenId,
         recipient: args.recipient,
         amount,
+        token: args.token,
         calldata: args.calldata,
       });
 

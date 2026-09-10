@@ -100,6 +100,7 @@ export interface ExecutionIntent {
   dryRunTokenId: string;
   recipient: string;
   amount: bigint;
+  token?: string | undefined;
   calldata?: string | undefined;
 }
 
@@ -184,6 +185,7 @@ export const ExecuteActionSchema = z.object({
   amount: z
     .string()
     .regex(/^\d+$/, "Amount must be an integer string in atomic units (wei)"),
+  token: z.string().optional(),
   calldata: z.string().optional(),
 });
 

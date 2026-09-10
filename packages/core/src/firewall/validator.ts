@@ -59,6 +59,7 @@ export class FirewallValidator {
       recipient: intent.recipient.toLowerCase(),
       amount: intent.amount.toString(),
       calldata: intent.calldata?.toLowerCase() || "",
+      token: intent.token?.toLowerCase() || "",
     });
     return createHash("sha256").update(canonical).digest("hex");
   }

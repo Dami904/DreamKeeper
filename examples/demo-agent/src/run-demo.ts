@@ -25,15 +25,21 @@ async function main() {
   );
   console.log(`[Daydreams Agent] Value: 10 USDC (10,000,000 atomic units)\n`);
 
+  const usdcToken = isLive
+    ? process.env["USDC_ADDRESS"] ||
+      "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    : undefined;
+
   // Phase 1: Pre-Flight Simulation (Dry Run)
   console.log("--- PHASE 1: PRE-FLIGHT SIMULATION & INVARIANT CHECK ---");
   console.log("[Daydreams Agent] Calling keeperhub_dry_run tool...");
 
   const dryRunResult = await actions.dryRunAction.handler({
     recipient: DEMO_APPROVED_VAULT,
-    amount: "10000000",
-    maxBalanceLoss: "10000000",
-    maxGasUnits: "100000",
+    amount: "5000000", // 5 USDC (6 decimals)
+    token: usdcToken,
+    maxBalanceLoss: "5000000",
+    maxGasUnits: "150000",
   });
 
   console.log("[KeeperHub Engine] Simulation Response:", dryRunResult);
@@ -53,7 +59,7 @@ async function main() {
   const idempotencyKey = generateSemanticIdempotencyKey({
     senderId: "daydreams-demo-agent",
     recipient: DEMO_APPROVED_VAULT,
-    amount: 10_000_000n,
+    amount: 5_000_000n,
   });
 
   console.log(
@@ -65,7 +71,8 @@ async function main() {
     idempotencyKey,
     dryRunTokenId,
     recipient: DEMO_APPROVED_VAULT,
-    amount: "10000000",
+    amount: "5000000",
+    token: usdcToken,
   });
 
   console.log("[KeeperHub Engine] Execution Response:", execResult);
