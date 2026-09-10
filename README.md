@@ -249,6 +249,7 @@ dreamkeeper/
 │       └── src/
 │           ├── agent.ts           # Daydreams agent configuration
 │           ├── run-demo.ts        # End-to-end execution walkthrough
+│           ├── test-end-to-end-full.ts # Full 5-action Daydreams + DreamKeeper + KeeperHub E2E
 │           └── test-firewall.ts   # Prompt injection & cap defense showcase
 ├── docs/
 │   ├── API_NOTES.md               # KeeperHub failure modes & transport semantics
@@ -284,7 +285,10 @@ pnpm build
 pnpm --filter @dreamkeeper/demo-agent run start
 
 # 5. Run the Hallucination Firewall defense test suite
-pnpm --filter @dreamkeeper/demo-agent run demo:firewall
+pnpm demo:firewall
+
+# 6. Run the full Daydreams + DreamKeeper + KeeperHub 5-action E2E pipeline
+pnpm demo:e2e
 ```
 
 ---

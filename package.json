@@ -12,6 +12,8 @@
     "test:watch": "vitest",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,json,md}\"",
+    "demo:e2e": "pnpm --filter @dreamkeeper/demo-agent run demo:e2e",
+    "demo:firewall": "pnpm --filter @dreamkeeper/demo-agent run demo:firewall",
     "live:demo": "pnpm --filter @dreamkeeper/demo-agent run live:demo"
   },
   "devDependencies": {

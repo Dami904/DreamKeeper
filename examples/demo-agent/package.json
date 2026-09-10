@@ -9,6 +9,8 @@
     "lint": "prettier --check \"src/**/*.ts\"",
     "start": "tsx src/run-demo.ts",
     "demo:firewall": "tsx src/test-firewall.ts",
+    "demo:e2e": "tsx src/test-end-to-end-full.ts",
+    "test:e2e": "tsx src/test-end-to-end-full.ts",
     "live:demo": "tsx src/run-demo.ts --live"
   },
   "dependencies": {

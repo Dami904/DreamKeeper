@@ -119,7 +119,10 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
 
     const mcpResult = isMcp ? res.data?.result : res.data;
 
-    if (res.status >= 400 || (mcpResult && !mcpResult.ok && mcpResult.isError)) {
+    if (
+      res.status >= 400 ||
+      (mcpResult && !mcpResult.ok && mcpResult.isError)
+    ) {
       return {
         ok: false,
         revertReason: mcpResult?.revertReason || "SIMULATION_REVERTED",
@@ -195,7 +198,8 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       timedOut: res.timedOut,
       txHash: mcpData?.txHash || mcpData?.transactionHash,
       revertReason: mcpData?.revertReason,
-      serverMessage: mcpData?.message || mcpData?.error || mcpData?.content?.[0]?.text,
+      serverMessage:
+        mcpData?.message || mcpData?.error || mcpData?.content?.[0]?.text,
     });
 
     return {

@@ -10,7 +10,8 @@ export interface DreamKeeperExtension {
     description: string;
     schema: any;
     handler: (params: any, ctx?: any) => Promise<any>;
-  }> & ReturnType<typeof createDaydreamsActions>;
+  }> &
+    ReturnType<typeof createDaydreamsActions>;
   actionsMap: ReturnType<typeof createDaydreamsActions>;
   actionsList: Array<{
     name: string;

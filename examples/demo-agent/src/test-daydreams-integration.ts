@@ -2,9 +2,13 @@ import { createDreams } from "@daydreamsai/core";
 import { createDemoExtension, DEMO_APPROVED_VAULT } from "./agent.js";
 
 async function main() {
-  console.log("\n===================================================================");
+  console.log(
+    "\n===================================================================",
+  );
   console.log("  TESTING DIRECT DAYDREAMS (@daydreamsai/core) INTEGRATION");
-  console.log("===================================================================\n");
+  console.log(
+    "===================================================================\n",
+  );
 
   const extension = createDemoExtension("mock");
 
@@ -15,12 +19,17 @@ async function main() {
     extensions: [extension as any],
   });
 
-  console.log("[Test] Daydreams agent instance created successfully:", typeof agent.start);
+  console.log(
+    "[Test] Daydreams agent instance created successfully:",
+    typeof agent.start,
+  );
   console.log(`[Test] Registered extension name: ${extension.name}`);
   console.log(`[Test] Registered actions count: ${extension.actions.length}`);
 
   // Test executing an action registered inside the Daydreams extension
-  console.log("\n[Test] Testing execution of dreamkeeper action through Daydreams extension...");
+  console.log(
+    "\n[Test] Testing execution of dreamkeeper action through Daydreams extension...",
+  );
 
   const dryRunAction = extension.actionsMap.dryRunAction;
   const result = await dryRunAction.handler({
@@ -34,9 +43,13 @@ async function main() {
     throw new Error(`Expected SIMULATION_SUCCESS, got ${result.status}`);
   }
 
-  console.log("\n===================================================================");
+  console.log(
+    "\n===================================================================",
+  );
   console.log("  DAYDREAMS INTEGRATION TEST PASSED: 100% Native Compatibility");
-  console.log("===================================================================\n");
+  console.log(
+    "===================================================================\n",
+  );
 }
 
 main().catch((err) => {
