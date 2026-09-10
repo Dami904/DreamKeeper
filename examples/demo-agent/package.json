@@ -1,0 +1,22 @@
+{
+  "name": "@dreamkeeper/demo-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Showcase agent running Daydreams with DreamKeeper deterministic execution",
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check \"src/**/*.ts\"",
+    "start": "tsx src/run-demo.ts",
+    "demo:firewall": "tsx src/test-firewall.ts",
+    "live:demo": "tsx src/run-demo.ts --live"
+  },
+  "dependencies": {
+    "@dreamkeeper/core": "workspace:*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
