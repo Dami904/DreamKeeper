@@ -8,6 +8,7 @@ import type {
   ExecutionIntent,
   ExecutionResult,
   KeeperHubConfig,
+  ProtocolActionIntent,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { MockKeeperHubTransport } from "./mock-transport.js";
@@ -246,6 +247,73 @@ export class KeeperHubClient {
    */
   public async getAudit(runId: string): Promise<AuditEntry | undefined> {
     return this.transport.getAudit(runId);
+  }
+
+  /**
+   * Broadcasts a pre-built KeeperHub protocol action (e.g. "aave-v3/supply").
+   * No dry-run/TTL/intent-hash step exists here — execute_protocol_action has
+   * no simulate mode at all, so the actionType whitelist is the only
+   * pre-flight gate available before it signs and broadcasts.
+   */
+  public async executeProtocolAction(
+    intent: ProtocolActionIntent,
+  ): Promise<ExecutionResult> {
+    logger.info("Received protocol action request", {
+      idempotencyKey: intent.idempotencyKey,
+      context: { actionType: intent.actionType },
+    });
+
+    if (!this.circuitBreaker.isExecutionAllowed()) {
+      return {
+        state: "FAILED",
+        idempotencyKey: intent.idempotencyKey,
+        error: "CIRCUIT_BREAKER_OPEN: Outbound execution is locked.",
+      };
+    }
+
+    const existing = this.idempotencyStore.get(intent.idempotencyKey);
+    if (existing && existing.result) {
+      logger.info("Returning cached idempotency result", {
+        idempotencyKey: intent.idempotencyKey,
+      });
+      return existing.result;
+    }
+
+    const validation = this.firewall.validateProtocolAction(intent.actionType);
+    if (!validation.valid) {
+      return {
+        state: "FAILED",
+        idempotencyKey: intent.idempotencyKey,
+        error: `FIREWALL_BLOCKED: ${validation.message}`,
+        revertReason: validation.reason,
+      };
+    }
+
+    this.idempotencyStore.savePreRequest({
+      key: intent.idempotencyKey,
+      recipient: intent.actionType,
+      amount: "0",
+      actionPayloadHash: JSON.stringify(intent.params),
+      state: "UNKNOWN",
+    });
+
+    const result = await this.transport.executeProtocolAction(intent);
+
+    this.idempotencyStore.updateState(
+      intent.idempotencyKey,
+      result.state,
+      result,
+    );
+
+    if (result.state === "CONFIRMED") {
+      this.circuitBreaker.recordSuccess();
+    } else if (result.state === "FAILED") {
+      this.circuitBreaker.recordFailure(result.revertReason || result.error);
+    } else if (result.state === "UNKNOWN") {
+      this.circuitBreaker.recordUnknown(result.error);
+    }
+
+    return result;
   }
 
   /**

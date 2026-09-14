@@ -23,7 +23,8 @@ export interface ValidationFailure {
     | "METHOD_NOT_ALLOWED"
     | "DRY_RUN_REQUIRED"
     | "DRY_RUN_TOKEN_EXPIRED"
-    | "DRY_RUN_INTENT_MISMATCH";
+    | "DRY_RUN_INTENT_MISMATCH"
+    | "PROTOCOL_ACTION_NOT_ALLOWED";
   message: string;
   details?: Record<string, unknown>;
 }
@@ -276,6 +277,33 @@ export class FirewallValidator {
       }
     }
 
+    return { valid: true };
+  }
+
+  /**
+   * Validates a KeeperHub protocol action type against the whitelist.
+   *
+   * Unlike allowedMethods (which only applies "if configured", defaulting to
+   * allow-all otherwise), this is default-deny even when unconfigured:
+   * execute_protocol_action has no simulate/dry-run mode at all, so there is
+   * no other safety net catching a bad call before it signs and broadcasts.
+   * An empty/unset allowedProtocolActions means "no protocol actions
+   * approved yet", not "all protocol actions approved".
+   */
+  public validateProtocolAction(actionType: string): ValidationResult {
+    const allowed = this.policy.allowedProtocolActions ?? [];
+    if (!allowed.includes(actionType)) {
+      logger.warn(
+        "Firewall blocked protocol action: actionType not whitelisted",
+        { context: { actionType, allowed } },
+      );
+      return {
+        valid: false,
+        reason: "PROTOCOL_ACTION_NOT_ALLOWED",
+        message: `Protocol action '${actionType}' is not on the approved actionType whitelist.`,
+        details: { actionType },
+      };
+    }
     return { valid: true };
   }
 

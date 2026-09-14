@@ -6,6 +6,7 @@ import {
   AuditActionSchema,
   CheckAndExecuteDryRunActionSchema,
   CheckAndExecuteExecuteActionSchema,
+  ProtocolActionSchema,
 } from "../types/index.js";
 import { StructuredLogger } from "../logger/index.js";
 
@@ -329,6 +330,71 @@ export function createDaydreamsActions(client: KeeperHubClient) {
     },
   };
 
+  const protocolActionAction: DaydreamsActionDefinition<
+    typeof ProtocolActionSchema,
+    any
+  > = {
+    name: "keeperhub_protocol_action",
+    description:
+      "Execute a pre-built KeeperHub DeFi protocol action (e.g. 'aave-v3/supply', 'morpho/withdraw', " +
+      "'uniswap/swap') by actionType, with parameters as a JSON object string in paramsJson. " +
+      "WARNING: unlike keeperhub_dry_run/keeperhub_execute, there is NO simulate/dry-run step for this " +
+      "action — it signs and broadcasts immediately once the actionType is approved by the firewall. " +
+      "Only pre-approved actionTypes can be called at all; there is no way to preview the result first.",
+    schema: ProtocolActionSchema,
+    handler: async (args) => {
+      logger.info("Executing keeperhub_protocol_action tool call", {
+        idempotencyKey: args.idempotencyKey,
+        context: { actionType: args.actionType },
+      });
+
+      let params: Record<string, unknown>;
+      try {
+        params = JSON.parse(args.paramsJson);
+      } catch {
+        return {
+          status: "FAILED",
+          idempotencyKey: args.idempotencyKey,
+          error: "paramsJson must be valid JSON.",
+        };
+      }
+
+      const result = await client.executeProtocolAction({
+        idempotencyKey: args.idempotencyKey,
+        actionType: args.actionType,
+        params,
+      });
+
+      if (result.state === "CONFIRMED") {
+        return {
+          status: "CONFIRMED",
+          txHash: result.txHash,
+          explorerUrl: result.explorerUrl,
+          runId: result.runId,
+          confirmedAt: result.confirmedAt,
+          summary: `Protocol action '${args.actionType}' successfully mined and confirmed on-chain at ${result.txHash}.`,
+        };
+      }
+
+      if (result.state === "UNKNOWN") {
+        return {
+          status: "UNKNOWN",
+          idempotencyKey: result.idempotencyKey,
+          runId: result.runId,
+          warning:
+            "Transaction status is currently indeterminate due to a network timeout. Do NOT retry with a new key. Call keeperhub_reconcile with this idempotencyKey to verify on-chain settlement.",
+        };
+      }
+
+      return {
+        status: "FAILED",
+        idempotencyKey: result.idempotencyKey,
+        error: result.error,
+        revertReason: result.revertReason,
+      };
+    },
+  };
+
   return {
     dryRunAction,
     executeAction,
@@ -336,5 +402,6 @@ export function createDaydreamsActions(client: KeeperHubClient) {
     auditAction,
     checkAndExecuteDryRunAction,
     checkAndExecuteAction,
+    protocolActionAction,
   };
 }

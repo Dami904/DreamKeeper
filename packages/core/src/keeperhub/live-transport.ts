@@ -8,6 +8,7 @@ import type {
   DryRunToken,
   ExecutionIntent,
   ExecutionResult,
+  ProtocolActionIntent,
   SupportedNetwork,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
@@ -1193,5 +1194,112 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
 
   public async getAudit(runId: string): Promise<AuditEntry | undefined> {
     return this.audits.get(runId);
+  }
+
+  public async executeProtocolAction(
+    intent: ProtocolActionIntent,
+  ): Promise<ExecutionResult> {
+    logger.info("Broadcasting live KeeperHub protocol action", {
+      idempotencyKey: intent.idempotencyKey,
+      context: { actionType: intent.actionType },
+    });
+
+    const call = await this.callTool("execute_protocol_action", {
+      actionType: intent.actionType,
+      params: intent.params,
+      idempotency_key: intent.idempotencyKey,
+    });
+
+    if (this.isAuthError(call)) {
+      logger.error("KeeperHub protocol action auth failure", {
+        idempotencyKey: intent.idempotencyKey,
+      });
+      return {
+        state: "FAILED",
+        idempotencyKey: intent.idempotencyKey,
+        error: this.authErrorMessage(),
+      };
+    }
+
+    if (call.timedOut || call.error || call.rpcError) {
+      logger.error("KeeperHub protocol action network/RPC failure", {
+        idempotencyKey: intent.idempotencyKey,
+        context: {
+          status: call.status,
+          error: call.error?.message,
+          rpcError: call.rpcError,
+        },
+      });
+      return {
+        state: "UNKNOWN",
+        idempotencyKey: intent.idempotencyKey,
+        error:
+          call.rpcError?.message ||
+          call.error?.message ||
+          "Network timeout awaiting KeeperHub protocol action response.",
+      };
+    }
+
+    if (call.isToolError || call.parsed?.success === false) {
+      logger.warn("KeeperHub protocol action rejected the request", {
+        idempotencyKey: intent.idempotencyKey,
+        context: {
+          revertReason: call.parsed?.revertReason,
+          rawText: call.text,
+        },
+      });
+      return {
+        state: "FAILED",
+        idempotencyKey: intent.idempotencyKey,
+        revertReason: call.parsed?.revertReason || "REQUEST_FAILED",
+        error:
+          call.parsed?.error ||
+          call.parsed?.originalError ||
+          call.text ||
+          "KeeperHub protocol action failed.",
+      };
+    }
+
+    const executionId: string | undefined =
+      call.parsed?.execution_id || call.parsed?.executionId || call.parsed?.id;
+
+    if (!executionId) {
+      logger.warn("KeeperHub protocol action response had no execution_id", {
+        idempotencyKey: intent.idempotencyKey,
+        context: { rawText: call.text },
+      });
+      return {
+        state: "UNKNOWN",
+        idempotencyKey: intent.idempotencyKey,
+        error:
+          "KeeperHub did not return a recognizable execution_id for this request; verify response shape once a live success sample is available.",
+      };
+    }
+
+    const polled = await this.pollExecutionStatus(executionId);
+
+    const result: ExecutionResult = {
+      state: polled.state,
+      idempotencyKey: intent.idempotencyKey,
+      runId: executionId,
+      txHash: polled.txHash,
+      explorerUrl: polled.explorerUrl,
+      error: polled.error,
+      revertReason: polled.revertReason,
+      confirmedAt: polled.state === "CONFIRMED" ? Date.now() : undefined,
+    };
+
+    this.audits.set(executionId, {
+      runId: executionId,
+      idempotencyKey: intent.idempotencyKey,
+      state: result.state,
+      timestamp: Date.now(),
+      recipient: intent.actionType,
+      amount: "0",
+      txHash: result.txHash,
+      policyValidationPassed: true,
+    });
+
+    return result;
   }
 }

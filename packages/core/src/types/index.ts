@@ -52,6 +52,14 @@ export interface FirewallPolicy {
   requireSimulationSuccess: boolean;
   /** Maximum age of a dry-run token in milliseconds (defaults to 60,000 ms) */
   dryRunTtlMs?: number | undefined;
+  /**
+   * Default-deny whitelist of exact KeeperHub protocol actionType strings
+   * (e.g. "aave-v3/supply"), gating execute_protocol_action. There is no
+   * recipient/amount to check for these — the actionType itself is the only
+   * thing to whitelist, since execute_protocol_action has no simulate mode
+   * to catch a bad call before it signs and broadcasts.
+   */
+  allowedProtocolActions?: string[] | undefined;
 }
 
 /**
@@ -154,6 +162,19 @@ export interface CheckAndExecuteIntent {
 export interface CheckAndExecuteExecutionIntent extends CheckAndExecuteIntent {
   idempotencyKey: string;
   dryRunTokenId: string;
+}
+
+/**
+ * A pre-built KeeperHub DeFi protocol action (e.g. "aave-v3/supply"),
+ * KeeperHub's own curated abstraction over raw contract calls. Has no
+ * simulate/dry-run mode — signs and broadcasts immediately — so it is
+ * gated only by the actionType whitelist, not by a firewall re-check after
+ * simulation the way transfers/contract calls/check-and-execute are.
+ */
+export interface ProtocolActionIntent {
+  idempotencyKey: string;
+  actionType: string;
+  params: Record<string, unknown>;
 }
 
 /**
@@ -289,6 +310,23 @@ export const CheckAndExecuteExecuteActionSchema = z.object({
     .min(
       1,
       "dryRunTokenId is required from a previous check-and-execute dry-run",
+    ),
+});
+
+export const ProtocolActionSchema = z.object({
+  idempotencyKey: z
+    .string()
+    .min(8, "Idempotency key must be at least 8 characters"),
+  actionType: z
+    .string()
+    .regex(
+      /^[a-z0-9-]+\/[a-z0-9-]+$/i,
+      "actionType must be in 'protocol/action-slug' format, e.g. 'aave-v3/supply'",
+    ),
+  paramsJson: z
+    .string()
+    .describe(
+      'Action parameters as a JSON object string, e.g. \'{"network":"84532","amount":"1000000"}\'',
     ),
 });
 

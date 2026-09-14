@@ -19,6 +19,7 @@ import type {
   DryRunToken,
   ExecutionIntent,
   ExecutionResult,
+  ProtocolActionIntent,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
@@ -568,5 +569,25 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
       this.runs.set(intent.idempotencyKey, result);
       return result;
     }
+  }
+
+  public async executeProtocolAction(
+    intent: ProtocolActionIntent,
+  ): Promise<ExecutionResult> {
+    // Protocol actions (e.g. "aave-v3/supply") are KeeperHub's own curated
+    // abstraction over specific protocol integrations — there is no local
+    // equivalent to fall back to with a raw signer, unlike transfers/contract
+    // calls/check-and-execute which map onto plain viem calls.
+    logger.warn(
+      "executeProtocolAction has no direct on-chain fallback implementation",
+      { context: { actionType: intent.actionType } },
+    );
+    return {
+      state: "FAILED",
+      idempotencyKey: intent.idempotencyKey,
+      revertReason: "NOT_SUPPORTED_WITHOUT_KEEPERHUB",
+      error:
+        "Protocol actions require the real KeeperHub MCP path (KEEPERHUB_API_KEY) — there is no direct on-chain fallback for KeeperHub's curated protocol integrations.",
+    };
   }
 }

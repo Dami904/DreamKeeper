@@ -61,6 +61,28 @@ A successful (non-simulate) `execute_transfer` call only returns an `execution_i
 - `unconfirmed` means broadcast but not yet mined — keep polling, **never re-send** (KeeperHub's own docs are explicit that re-sending an unconfirmed execution can double-spend).
 - On `completed`, the response's `transactionLink` is the on-chain proof (BaseScan URL); a `transactionHash`/`txHash` field may also be present.
 
+### `execute_check_and_execute` — different response fields than execute_transfer/execute_contract_call
+
+Verified directly against the real API for both outcomes. There is **no top-level `wouldRevert`** for a "condition not met" result — an earlier version of `live-transport.ts` assumed the same `success`/`wouldRevert` shape as `execute_transfer` and silently treated an unmet condition as success:
+
+- **Condition not met**: `{"success": true, "status": "simulated", "executed": false, "conditionResult": {"met": false, "observedValue": "...", "targetValue": "...", "operator": "..."}}`. `success:true` only means the API call itself worked — it says nothing about whether the condition held.
+- **Condition met (action simulated)**: adds `from`, `to`, `value`, `gasEstimate`, `simulatedReturnValue`, `wouldRevert`, and `executed: true` alongside `conditionResult.met: true`.
+
+Treat `executed !== true || conditionResult.met !== true` as "nothing would run" — not as a hard error, but not as success either.
+
+### `execute_protocol_action` — no simulate mode; not every discoverable actionType is directly executable
+
+Verified directly: `search_protocol_actions` returns many actionTypes (`web3/read-contract`, `math/format-number`, `data/flatten-findings`, etc.) that are **workflow-only** — calling them via `execute_protocol_action` returns `501 Not Implemented`: `{"error": "Direct execution not supported for \"<actionType>\". Use workflow execution instead."}`. Only a subset (the actual protocol integrations, e.g. `aave-v3/*`, `chronicle/*`, `pyth/*`) support direct execution. There's no field in `search_protocol_actions`' output that flags this distinction — you find out by calling `execute_protocol_action` and checking for a 501.
+
+Real error shapes observed (both correctly handled by treating `parsed.error` as the message regardless of HTTP status):
+
+- Non-2xx with an embedded JSON error: `"API call failed: 400 Bad Request - {\"success\":false,\"error\":\"...\"}"`
+- A plain 200 with `success:false` embedded directly: `{"success": false, "destinationError": true, "error": "...", "errorClass": "user"}`
+
+**Not yet verified**: the success-path response shape. Every real call made during development hit a genuine error (protocol not deployed on the target chain, or an invalid contract address) before a successful broadcast could be observed. `live-transport.ts` assumes the same `execution_id`-then-`get_direct_execution_status`-poll pattern as the other direct-execution tools (this is what `tools_documentation` describes), but the exact success-path field names are a best-effort guess pending a real success sample — re-verify before relying on it for a production integration.
+
+Also note: `execute_protocol_action`'s `params` object carries its own `network` field — DreamKeeper's firewall does **not** cross-check this against `FirewallPolicy.network`, so a protocol action's target chain is not currently policy-gated, only its `actionType` is.
+
 ### Auth / error responses
 
 A bad or missing API key does **not** produce a flat `{"error": "invalid_token"}` — an earlier version of this doc and of `live-transport.ts` assumed this shape and never observed a real failure. What we've verified: an invalid/empty key still gets past `initialize` in some cases and fails later with a `"Missing or invalid API key"`-style message inside the tool response; a fully absent/malformed key can also produce an HTTP 401/403 on `initialize` itself. Treat both as auth failures.

@@ -6,6 +6,7 @@ import type {
   DryRunResult,
   ExecutionIntent,
   ExecutionResult,
+  ProtocolActionIntent,
 } from "../types/index.js";
 
 export interface KeeperHubTransport {
@@ -43,4 +44,11 @@ export interface KeeperHubTransport {
   checkAndExecuteExecute(
     intent: CheckAndExecuteExecutionIntent,
   ): Promise<ExecutionResult>;
+
+  /**
+   * Broadcasts a pre-built KeeperHub protocol action (e.g. "aave-v3/supply").
+   * No simulate/dry-run mode exists for this — it signs and broadcasts
+   * immediately.
+   */
+  executeProtocolAction(intent: ProtocolActionIntent): Promise<ExecutionResult>;
 }

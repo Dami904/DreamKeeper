@@ -8,6 +8,7 @@ import type {
   DryRunToken,
   ExecutionIntent,
   ExecutionResult,
+  ProtocolActionIntent,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
@@ -277,6 +278,14 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
       intent.action.contractAddress,
       intent.action.value ?? 0n,
     );
+  }
+
+  public async executeProtocolAction(
+    intent: ProtocolActionIntent,
+  ): Promise<ExecutionResult> {
+    // No recipient/amount concept for a protocol action; actionType stands
+    // in as the audit record's "recipient" for this generic broadcast path.
+    return this.mockBroadcast(intent.idempotencyKey, intent.actionType, 0n);
   }
 
   public async reconcile(idempotencyKey: string): Promise<ExecutionResult> {
