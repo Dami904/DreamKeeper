@@ -9,6 +9,7 @@ import type {
   SupportedNetwork,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
+import { InvariantEvaluator } from "../firewall/invariants.js";
 import { StructuredLogger } from "../logger/index.js";
 
 const logger = new StructuredLogger("LiveKeeperHubTransport");
@@ -409,6 +410,35 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
         error:
           "KeeperHub returned a non-integer numeric field in the simulation response.",
       };
+    }
+
+    // KeeperHub's own success/wouldRevert only tells us the call wouldn't
+    // revert — it says nothing about DreamKeeper's own caller-supplied
+    // invariants (max loss, min received, gas ceiling). This must be
+    // evaluated here too, same as onchain-transport.ts and mock-transport.ts
+    // already do — without it, expectedInvariant is silently ignored on the
+    // real KeeperHub path.
+    if (intent.expectedInvariant) {
+      const evalResult = InvariantEvaluator.evaluate(intent.expectedInvariant, {
+        estimatedGasUnits,
+        actualDelta: projectedDelta,
+      });
+      if (!evalResult.passed) {
+        logger.warn(
+          "KeeperHub dryRun passed simulation but failed invariant evaluation",
+          {
+            context: {
+              recipient: intent.recipient,
+              violations: evalResult.violations,
+            },
+          },
+        );
+        return {
+          ok: false,
+          revertReason: evalResult.violations.join("; "),
+          error: `Invariant violation: ${evalResult.violations.join("; ")}`,
+        };
+      }
     }
 
     // KeeperHub's simulate response has no notion of DreamKeeper's own

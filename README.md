@@ -174,7 +174,7 @@ flowchart TD
 1. **Step 1: Firewall Check**: Ingests intent. Checks if recipient is in `allowedRecipients`. Asserts `amount <= maxAmountPerTx` and `24hSpend + amount <= maxCumulativeDailySpend`. If failed, aborts with `FIREWALL_BLOCKED`.
 2. **Step 2: Dry-Run Simulation**: Simulates transaction on an on-chain state fork via KeeperHub. Checks that execution does not revert.
 3. **Step 3: Invariant Evaluation**: Mathematically checks that `balanceLoss <= maxBalanceLoss`, `tokensReceived >= minTokensReceived`, and `gas <= maxGasUnits`. If passed, issues a `DryRunToken` with 60-second TTL.
-4. **Step 4: Idempotency Key Persistence**: Generates a deterministic semantic idempotency key and persists it _before_ dispatching network packets.
+4. **Step 4: Idempotency Key Persistence**: Generates a semantic idempotency key — a SHA-256 hash of `(sender, recipient, amount, calldata)` plus a random nonce — and persists it _before_ dispatching network packets. Only the hash prefix is deterministic from the intent; the nonce means the key itself must be reused by the caller across retries, not regenerated from scratch.
 5. **Step 5: Turnkey Execution**: Broadcasts transaction through KeeperHub's Turnkey signer with private RPC routing.
 6. **Step 6: 3-State Classification**: Parses response. If tx is confirmed, records spend and marks `CONFIRMED`. If dropped, records `UNKNOWN` for non-duplicating reconciliation.
 
