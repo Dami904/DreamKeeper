@@ -1,71 +1,296 @@
+import { createHash, randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   DryRunIntent,
   DryRunResult,
+  DryRunToken,
   ExecutionIntent,
   ExecutionResult,
+  SupportedNetwork,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
-import { ExecutionStateMachine } from "./state-machine.js";
 import { StructuredLogger } from "../logger/index.js";
 
 const logger = new StructuredLogger("LiveKeeperHubTransport");
+
+// KeeperHub MCP `chain_id` values, keyed by DreamKeeper's SupportedNetwork policy setting.
+const CHAIN_IDS: Record<SupportedNetwork, string> = {
+  "ethereum-mainnet": "1",
+  "base-mainnet": "8453",
+  "base-sepolia": "84532",
+  "ethereum-sepolia": "11155111",
+  "arbitrum-one": "42161",
+  "arbitrum-sepolia": "421614",
+};
+
+// Direct-execution status values per KeeperHub's get_direct_execution_status tool.
+// Only "completed" and "failed" are terminal; everything else must keep being polled.
+type DirectExecutionStatus =
+  "pending" | "running" | "unconfirmed" | "completed" | "failed";
+
+const POLL_ATTEMPTS = 5;
+const POLL_INTERVAL_MS = 2_000;
+const MCP_PROTOCOL_VERSION = "2024-11-05";
 
 export interface LiveTransportOptions {
   endpoint?: string | undefined;
   apiKey?: string | undefined;
   timeoutMs?: number | undefined;
+  network?: SupportedNetwork | undefined;
+}
+
+interface ToolCallResult {
+  status: number;
+  /** Raw JSON-RPC `result` object, e.g. `{ content: [...], isError }`. */
+  result?: any;
+  /** JSON object extracted from `result.content[0].text`, when present and parseable. */
+  parsed?: any;
+  /** Raw text content, kept for error messages when `parsed` extraction fails. */
+  text?: string | undefined;
+  isToolError?: boolean;
+  rpcError?: { code?: number; message?: string };
+  authError?: boolean | undefined;
+  error?: Error | undefined;
+  timedOut?: boolean | undefined;
 }
 
 export class LiveKeeperHubTransport implements KeeperHubTransport {
   private endpoint: string;
   private apiKey?: string | undefined;
   private timeoutMs: number;
+  private chainId: string;
+
+  // MCP Streamable-HTTP requires an initialize handshake before tools/call;
+  // the server hands back a session id (header) that must be echoed on every
+  // subsequent request, or it responds "Session not initialized".
+  private sessionId?: string | undefined;
+  private sessionPromise?:
+    Promise<{ ok: boolean; authError?: boolean; error?: string }> | undefined;
+
+  // KeeperHub execution_id, keyed by DreamKeeper's idempotencyKey, so reconcile()
+  // can resume polling get_direct_execution_status without the caller needing to
+  // track KeeperHub's own identifier.
+  private executionIds = new Map<string, string>();
+  // Audit trail synthesized locally: KeeperHub's MCP surface has no direct-execution
+  // audit-log endpoint distinct from get_direct_execution_status.
+  private audits = new Map<string, AuditEntry>();
 
   constructor(options?: LiveTransportOptions) {
     this.endpoint = options?.endpoint || "https://app.keeperhub.com/mcp";
     this.apiKey = options?.apiKey;
     this.timeoutMs = options?.timeoutMs || 15_000;
+    this.chainId = CHAIN_IDS[options?.network || "base-sepolia"];
   }
 
-  private async postJson(
-    path: string,
-    body: unknown,
-  ): Promise<{
+  private headers(): Record<string, string> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    };
+    if (this.apiKey) {
+      headers["Authorization"] = `Bearer ${this.apiKey}`;
+    }
+    if (this.sessionId) {
+      headers["Mcp-Session-Id"] = this.sessionId;
+    }
+    return headers;
+  }
+
+  private async rawPost(body: unknown): Promise<{
     status: number;
+    headers: Headers;
     data?: any;
     error?: Error | undefined;
     timedOut?: boolean | undefined;
   }> {
-    const url = `${this.endpoint.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      };
-      if (this.apiKey) {
-        headers["Authorization"] = `Bearer ${this.apiKey}`;
-      }
-
-      const res = await fetch(url, {
+      const res = await fetch(this.endpoint, {
         method: "POST",
-        headers,
+        headers: this.headers(),
         body: JSON.stringify(body),
         signal: controller.signal,
       });
 
       const json = await res.json().catch(() => undefined);
-      return { status: res.status, data: json };
+      return { status: res.status, headers: res.headers, data: json };
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err));
       const timedOut = error.name === "AbortError";
-      return { status: 0, error, timedOut };
+      return { status: 0, headers: new Headers(), error, timedOut };
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Performs the MCP `initialize` handshake once and caches the resulting
+   * session id for the lifetime of this transport instance. Concurrent
+   * callers await the same in-flight handshake rather than each starting one.
+   */
+  private async ensureSession(): Promise<{
+    ok: boolean;
+    authError?: boolean;
+    error?: string;
+  }> {
+    if (this.sessionId) return { ok: true };
+    if (!this.sessionPromise) {
+      this.sessionPromise = this.initializeSession();
+    }
+    return this.sessionPromise;
+  }
+
+  private async initializeSession(): Promise<{
+    ok: boolean;
+    authError?: boolean;
+    error?: string;
+  }> {
+    const res = await this.rawPost({
+      jsonrpc: "2.0",
+      id: `init_${randomUUID()}`,
+      method: "initialize",
+      params: {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "dreamkeeper", version: "0.1.0" },
+      },
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      this.sessionPromise = undefined;
+      return {
+        ok: false,
+        authError: true,
+        error: "KeeperHub rejected the API key during session initialize.",
+      };
+    }
+
+    if (res.error || res.timedOut || res.data?.error) {
+      this.sessionPromise = undefined;
+      return {
+        ok: false,
+        error:
+          res.data?.error?.message ||
+          res.error?.message ||
+          "Failed to initialize KeeperHub MCP session.",
+      };
+    }
+
+    const sessionId = res.headers.get("mcp-session-id");
+    if (!sessionId) {
+      this.sessionPromise = undefined;
+      return {
+        ok: false,
+        error: "KeeperHub did not return an Mcp-Session-Id header.",
+      };
+    }
+
+    this.sessionId = sessionId;
+
+    // Required MCP handshake notification; best-effort, no response body expected.
+    await this.rawPost({ jsonrpc: "2.0", method: "notifications/initialized" });
+
+    return { ok: true };
+  }
+
+  /** Extracts the first balanced `{...}` JSON object found in a text blob. */
+  private extractJson(text: string): any | undefined {
+    const start = text.indexOf("{");
+    if (start === -1) return undefined;
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          try {
+            return JSON.parse(text.slice(start, i + 1));
+          } catch {
+            return undefined;
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private async callTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<ToolCallResult> {
+    const session = await this.ensureSession();
+    if (!session.ok) {
+      return {
+        status: 0,
+        authError: session.authError,
+        error: new Error(
+          session.error || "KeeperHub session initialization failed.",
+        ),
+      };
+    }
+
+    const res = await this.rawPost({
+      jsonrpc: "2.0",
+      id: `call_${randomUUID()}`,
+      method: "tools/call",
+      params: { name, arguments: args },
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      // Session may have expired; drop it so the next call re-initializes.
+      this.sessionId = undefined;
+      this.sessionPromise = undefined;
+      return { status: res.status, authError: true };
+    }
+
+    const result = res.data?.result;
+    // KeeperHub's tool responses wrap their payload as MCP text content:
+    // result.content[0].text holds a JSON object, sometimes followed by
+    // human-readable guidance prose appended after it.
+    const text: string | undefined = result?.content?.[0]?.text;
+    const parsed =
+      typeof text === "string" ? this.extractJson(text) : undefined;
+
+    return {
+      status: res.status,
+      result,
+      parsed,
+      text,
+      isToolError: result?.isError === true,
+      rpcError: res.data?.error,
+      error: res.error,
+      timedOut: res.timedOut,
+    };
+  }
+
+  private isAuthError(call: ToolCallResult): boolean {
+    if (call.authError) return true;
+    const msg = call.rpcError?.message?.toLowerCase() || "";
+    return msg.includes("api key") || msg.includes("unauthorized");
+  }
+
+  private authErrorMessage(): string {
+    return "KeeperHub Auth Error: Missing or invalid API key. Set KEEPERHUB_API_KEY with a valid 'kh_' bearer token to run live.";
   }
 
   public async dryRun(intent: DryRunIntent): Promise<DryRunResult> {
@@ -76,68 +301,82 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       },
     });
 
-    const isMcp = this.endpoint.includes("/mcp");
-    const path = isMcp ? "" : "dry-run";
-    const body = isMcp
-      ? {
-          jsonrpc: "2.0",
-          id: Date.now(),
-          method: "tools/call",
-          params: {
-            name: "execute_transfer",
-            arguments: {
-              chain_id: "84532",
-              to_address: intent.recipient,
-              amount: (Number(intent.amount) / 1e6).toString(),
-              simulate: true,
-            },
-          },
-        }
-      : {
-          recipient: intent.recipient,
-          amount: intent.amount.toString(),
-          calldata: intent.calldata,
-          method: intent.method,
-        };
+    const call = await this.callTool("execute_transfer", {
+      chain_id: this.chainId,
+      to_address: intent.recipient,
+      amount: (Number(intent.amount) / 1e6).toString(),
+      ...(intent.token ? { token_address: intent.token } : {}),
+      simulate: true,
+    });
 
-    const res = await this.postJson(path, body);
+    if (this.isAuthError(call)) {
+      return { ok: false, error: this.authErrorMessage() };
+    }
 
-    if (res.timedOut || res.error) {
+    if (call.timedOut || call.error) {
       return {
         ok: false,
-        error: `Simulation request failed: ${res.error?.message || "Network timeout"}`,
+        error: `Simulation request failed: ${call.error?.message || "Network timeout"}`,
       };
     }
 
-    if (res.data?.error === "invalid_token") {
+    if (call.rpcError) {
       return {
         ok: false,
+        error: call.rpcError.message || "KeeperHub simulation request failed.",
+      };
+    }
+
+    const success = call.parsed?.success === true;
+    const wouldRevert = call.parsed?.wouldRevert === true;
+
+    if (call.isToolError || !success || wouldRevert) {
+      return {
+        ok: false,
+        revertReason:
+          call.parsed?.revertReason ||
+          call.parsed?.failureKind ||
+          "SIMULATION_REVERTED",
         error:
-          "KeeperHub Auth Error: Missing or invalid API key. Set KEEPERHUB_API_KEY with a valid 'kh_' bearer token to run live.",
+          call.parsed?.error ||
+          call.parsed?.originalError ||
+          call.text ||
+          "Simulation would revert on-chain.",
       };
     }
 
-    const mcpResult = isMcp ? res.data?.result : res.data;
+    const estimatedGasUnits = BigInt(
+      call.parsed?.estimatedGasUnits || call.parsed?.gasUsed || "65000",
+    );
+    const projectedDelta = BigInt(
+      call.parsed?.projectedDelta || `-${intent.amount}`,
+    );
 
-    if (
-      res.status >= 400 ||
-      (mcpResult && !mcpResult.ok && mcpResult.isError)
-    ) {
-      return {
-        ok: false,
-        revertReason: mcpResult?.revertReason || "SIMULATION_REVERTED",
-        error:
-          mcpResult?.error ||
-          mcpResult?.content?.[0]?.text ||
-          `HTTP ${res.status}: Simulation reverted on-chain.`,
-      };
-    }
+    // KeeperHub's simulate response has no notion of DreamKeeper's own
+    // hash-bound DryRunToken — that binding is DreamKeeper's firewall
+    // primitive, layered on top of KeeperHub, so it must be synthesized
+    // locally (same approach onchain-transport.ts uses).
+    const canonical = JSON.stringify({
+      recipient: intent.recipient.toLowerCase(),
+      amount: intent.amount.toString(),
+      calldata: intent.calldata?.toLowerCase() || "",
+      token: intent.token?.toLowerCase() || "",
+    });
+    const intentHash = createHash("sha256").update(canonical).digest("hex");
+
+    const token: DryRunToken = {
+      tokenId: `drt_${randomUUID().slice(0, 12)}`,
+      intentHash,
+      issuedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      simulationTrace: { estimatedGasUnits, projectedDelta },
+    };
 
     return {
       ok: true,
-      token: mcpResult?.token,
-      estimatedGasUnits: BigInt(mcpResult?.estimatedGasUnits || "65000"),
-      projectedDelta: BigInt(mcpResult?.projectedDelta || `-${intent.amount}`),
+      token,
+      estimatedGasUnits,
+      projectedDelta,
     };
   }
 
@@ -145,7 +384,7 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     intent: ExecutionIntent,
     _dryRunResult?: DryRunResult,
   ): Promise<ExecutionResult> {
-    logger.info("Broadcasting live KeeperHub executeWorkflow", {
+    logger.info("Broadcasting live KeeperHub direct execution", {
       idempotencyKey: intent.idempotencyKey,
       context: {
         recipient: intent.recipient,
@@ -153,102 +392,177 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       },
     });
 
-    const isMcp = this.endpoint.includes("/mcp");
-    const path = isMcp ? "" : "execute";
-    const body = isMcp
-      ? {
-          jsonrpc: "2.0",
-          id: Date.now(),
-          method: "tools/call",
-          params: {
-            name: "execute_transfer",
-            arguments: {
-              chain_id: "84532",
-              to_address: intent.recipient,
-              amount: (Number(intent.amount) / 1e6).toString(),
-              idempotency_key: intent.idempotencyKey,
-              simulate: false,
-            },
-          },
-        }
-      : {
-          idempotencyKey: intent.idempotencyKey,
-          dryRunTokenId: intent.dryRunTokenId,
-          recipient: intent.recipient,
-          amount: intent.amount.toString(),
-          calldata: intent.calldata,
-        };
+    const call = await this.callTool("execute_transfer", {
+      chain_id: this.chainId,
+      to_address: intent.recipient,
+      amount: (Number(intent.amount) / 1e6).toString(),
+      ...(intent.token ? { token_address: intent.token } : {}),
+      idempotency_key: intent.idempotencyKey,
+      simulate: false,
+    });
 
-    const res = await this.postJson(path, body);
-
-    if (res.data?.error === "invalid_token") {
+    if (this.isAuthError(call)) {
       return {
         state: "FAILED",
         idempotencyKey: intent.idempotencyKey,
-        error:
-          "KeeperHub Auth Error: Missing or invalid API key. Set KEEPERHUB_API_KEY with a valid 'kh_' bearer token to run live.",
+        error: this.authErrorMessage(),
       };
     }
 
-    const mcpData = isMcp ? res.data?.result : res.data;
+    if (call.timedOut || call.error || call.rpcError) {
+      return {
+        state: "UNKNOWN",
+        idempotencyKey: intent.idempotencyKey,
+        error:
+          call.rpcError?.message ||
+          call.error?.message ||
+          "Network timeout awaiting KeeperHub execution response.",
+      };
+    }
 
-    const classified = ExecutionStateMachine.classifyResponse({
-      statusCode: res.status,
-      networkError: res.error,
-      timedOut: res.timedOut,
-      txHash: mcpData?.txHash || mcpData?.transactionHash,
-      revertReason: mcpData?.revertReason,
-      serverMessage:
-        mcpData?.message || mcpData?.error || mcpData?.content?.[0]?.text,
+    if (call.isToolError || call.parsed?.success === false) {
+      return {
+        state: "FAILED",
+        idempotencyKey: intent.idempotencyKey,
+        revertReason: call.parsed?.revertReason || call.parsed?.failureKind,
+        error:
+          call.parsed?.error ||
+          call.parsed?.originalError ||
+          call.text ||
+          "KeeperHub execution failed.",
+      };
+    }
+
+    const executionId: string | undefined =
+      call.parsed?.execution_id || call.parsed?.executionId || call.parsed?.id;
+
+    if (!executionId) {
+      logger.warn("KeeperHub execute_transfer response had no execution_id", {
+        context: { rawText: call.text },
+      });
+      return {
+        state: "UNKNOWN",
+        idempotencyKey: intent.idempotencyKey,
+        error:
+          "KeeperHub did not return a recognizable execution_id for this request; verify response shape once a live success sample is available.",
+      };
+    }
+
+    this.executionIds.set(intent.idempotencyKey, executionId);
+
+    // Poll get_direct_execution_status with bounded backoff, per KeeperHub's
+    // documented direct-execution flow. If it's still non-terminal after the
+    // budget, return UNKNOWN — the caller (keeperhub_reconcile) can resume
+    // polling later via reconcile() without re-broadcasting.
+    const polled = await this.pollExecutionStatus(executionId);
+
+    const result: ExecutionResult = {
+      state: polled.state,
+      idempotencyKey: intent.idempotencyKey,
+      runId: executionId,
+      txHash: polled.txHash,
+      explorerUrl: polled.explorerUrl,
+      error: polled.error,
+      revertReason: polled.revertReason,
+      confirmedAt: polled.state === "CONFIRMED" ? Date.now() : undefined,
+    };
+
+    this.audits.set(executionId, {
+      runId: executionId,
+      idempotencyKey: intent.idempotencyKey,
+      state: result.state,
+      timestamp: Date.now(),
+      recipient: intent.recipient,
+      amount: intent.amount.toString(),
+      txHash: result.txHash,
+      policyValidationPassed: true,
     });
 
+    return result;
+  }
+
+  private async pollExecutionStatus(executionId: string): Promise<{
+    state: ExecutionResult["state"];
+    txHash?: string | undefined;
+    explorerUrl?: string | undefined;
+    error?: string | undefined;
+    revertReason?: string | undefined;
+  }> {
+    for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      }
+
+      const call = await this.callTool("get_direct_execution_status", {
+        execution_id: executionId,
+      });
+
+      if (
+        call.timedOut ||
+        call.error ||
+        call.rpcError ||
+        this.isAuthError(call)
+      ) {
+        continue;
+      }
+
+      const status: DirectExecutionStatus | undefined = call.parsed?.status;
+      const txHash: string | undefined =
+        call.parsed?.transactionHash || call.parsed?.txHash;
+      const explorerUrl: string | undefined = call.parsed?.transactionLink;
+
+      if (status === "completed") {
+        return { state: "CONFIRMED", txHash, explorerUrl };
+      }
+      if (status === "failed") {
+        return {
+          state: "FAILED",
+          txHash,
+          explorerUrl,
+          revertReason: call.parsed?.revertReason || "EXECUTION_FAILED",
+          error:
+            call.parsed?.error || call.text || "KeeperHub execution failed.",
+        };
+      }
+      // pending / running / unconfirmed: not terminal, keep polling.
+    }
+
     return {
-      state: classified.state,
-      idempotencyKey: intent.idempotencyKey,
-      runId: res.data?.runId,
-      txHash: res.data?.txHash,
-      explorerUrl: res.data?.txHash
-        ? `https://sepolia.basescan.org/tx/${res.data.txHash}`
-        : undefined,
-      error: classified.error,
-      revertReason: classified.revertReason,
-      confirmedAt: classified.state === "CONFIRMED" ? Date.now() : undefined,
+      state: "UNKNOWN",
+      error:
+        "Execution still pending after bounded poll window; call keeperhub_reconcile to continue checking.",
     };
   }
 
   public async reconcile(idempotencyKey: string): Promise<ExecutionResult> {
-    logger.info("Reconciling live KeeperHub transaction status", {
+    logger.info("Reconciling live KeeperHub execution status", {
       idempotencyKey,
     });
 
-    const res = await this.postJson("reconcile", { idempotencyKey });
-    const classified = ExecutionStateMachine.classifyResponse({
-      statusCode: res.status,
-      networkError: res.error,
-      timedOut: res.timedOut,
-      txHash: res.data?.txHash,
-      revertReason: res.data?.revertReason,
-      serverMessage: res.data?.message,
-    });
+    const executionId = this.executionIds.get(idempotencyKey);
+    if (!executionId) {
+      return {
+        state: "UNKNOWN",
+        idempotencyKey,
+        error: "No KeeperHub execution_id on record for this idempotency key.",
+      };
+    }
+
+    const polled = await this.pollExecutionStatus(executionId);
 
     return {
-      state: classified.state,
+      state: polled.state,
       idempotencyKey,
-      runId: res.data?.runId,
-      txHash: res.data?.txHash,
-      explorerUrl: res.data?.txHash
-        ? `https://sepolia.basescan.org/tx/${res.data.txHash}`
-        : undefined,
-      error: classified.error,
-      confirmedAt: classified.state === "CONFIRMED" ? Date.now() : undefined,
+      runId: executionId,
+      txHash: polled.txHash,
+      explorerUrl: polled.explorerUrl,
+      error: polled.error,
+      revertReason: polled.revertReason,
+      confirmedAt: polled.state === "CONFIRMED" ? Date.now() : undefined,
     };
   }
 
   public async getAudit(runId: string): Promise<AuditEntry | undefined> {
-    const res = await this.postJson("audit", { runId });
-    if (res.status === 200 && res.data) {
-      return res.data;
-    }
-    return undefined;
+    return this.audits.get(runId);
   }
 }

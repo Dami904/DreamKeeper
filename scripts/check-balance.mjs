@@ -32,10 +32,14 @@ async function main() {
     console.log(`Base Sepolia USDC Balance: ${formatUnits(usdcBalance, 6)} USDC`);
 
     console.log("-------------------------------------------------------------------");
-    if (ethBalance > 0n) {
+    if (ethBalance > 0n && usdcBalance > 0n) {
       console.log("Status: READY FOR ON-CHAIN EXECUTION!");
+    } else if (ethBalance === 0n && usdcBalance === 0n) {
+      console.log("Status: Awaiting funding from Base Sepolia faucet (needs ETH + USDC)...");
+    } else if (ethBalance === 0n) {
+      console.log("Status: Awaiting ETH funding from Base Sepolia faucet (gas required)...");
     } else {
-      console.log("Status: Awaiting funding from Base Sepolia faucet...");
+      console.log("Status: Awaiting USDC funding (no tokens to transfer)...");
     }
     console.log("===================================================================\n");
   } catch (err) {

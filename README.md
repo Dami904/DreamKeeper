@@ -33,7 +33,7 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 
 </div>
 
-The demo footage executes against the real `@dreamkeeper/core` state machine and firewall. In the video, watch the terminal status change from `FIREWALL_BLOCKED` to `CONFIRMED` on Base Sepolia with verified on-chain transaction hash [`0x2e682f22a99409d9a94a0cf4e4bc9ecc86cc45d79d2c26d7146b6849fac6f498`](https://sepolia.basescan.org/tx/0x2e682f22a99409d9a94a0cf4e4bc9ecc86cc45d79d2c26d7146b6849fac6f498). Note that local test and demo runs default to `mock` mode to verify offline with zero gas; live on-chain broadcast with public BaseScan indexing is enabled via `pnpm live:demo`.
+The demo footage executes against the real `@dreamkeeper/core` state machine and firewall. In the video, watch the terminal status change from `FIREWALL_BLOCKED` to `CONFIRMED` on Base Sepolia with verified on-chain transaction hash [`0xde3dfdccf82a6d0573b026aec28ae55e6c693686c82b2ea792be9ffd09b85a36`](https://sepolia.basescan.org/tx/0xde3dfdccf82a6d0573b026aec28ae55e6c693686c82b2ea792be9ffd09b85a36) — confirmed 5 USDC transfer, broadcast and signed through KeeperHub's live MCP endpoint and Turnkey enclave (not a local signer). Note that local test and demo runs default to `mock` mode to verify offline with zero gas; live on-chain broadcast with public BaseScan indexing is enabled via `pnpm live:demo` / `pnpm live:e2e`.
 
 ---
 
@@ -206,7 +206,9 @@ flowchart TD
 ## Integrity: what's staged vs. real
 
 - **The Demo & Verification Scripts ([`run-demo.ts`](examples/demo-agent/src/run-demo.ts), [`test-end-to-end-full.ts`](examples/demo-agent/src/test-end-to-end-full.ts))**: Default to `mock` mode (`MockKeeperHubTransport`) so that hackathon judges, CI, and external auditors can verify 100% of state transitions, invariants, and firewall rules offline with **$0.00 spent and zero private keys**. Transaction hashes in mock mode are deterministically generated in-memory simulations and are not broadcast to public BaseScan nodes.
-- **Live Mode (`LiveKeeperHubTransport`)**: Passing `--live` (via `pnpm live:demo`) routes calls over JSON-RPC to the live KeeperHub MCP endpoint (`https://app.keeperhub.com/mcp`) and Turnkey enclaves on Base Sepolia (`chainId: 84532`), generating public on-chain transactions broadcast and indexed on BaseScan.
+- **Live Mode (`LiveKeeperHubTransport`)**: Passing `--live` (via `pnpm live:demo` / `pnpm live:e2e`) performs a real MCP session handshake against the live KeeperHub endpoint (`https://app.keeperhub.com/mcp`), simulates via `execute_transfer`, and broadcasts through KeeperHub's Turnkey-backed wallet integration on Base Sepolia (`chainId: 84532`) — the resulting transaction is signed and routed entirely by KeeperHub, not by a key held in this repo. This is selected automatically whenever `KEEPERHUB_API_KEY` is set.
+- **Direct On-Chain Fallback (`OnChainKeeperHubTransport`)**: If no `KEEPERHUB_API_KEY` is configured but a `PRIVATE_KEY` is, live mode falls back to signing and broadcasting directly via `viem` against the public RPC — the same firewall, invariant, and 3-state logic applies, but execution bypasses KeeperHub/Turnkey entirely. This exists so the safety layer is still demonstrable without a KeeperHub account, and is clearly a different code path from the one above.
+- **Scripted vs. LLM-Driven Demos**: `run-demo.ts`, `test-firewall.ts`, and `test-end-to-end-full.ts` call each Daydreams action's handler directly with a fixed payload — deterministic and reproducible, but not an LLM making a decision. [`test-real-agent.ts`](examples/demo-agent/src/test-real-agent.ts) is the one script where a real, live model (via OpenRouter) reads the adversarial prompt itself, decides whether to call `keeperhub_dry_run`, and gets blocked by the firewall on its own initiative — run it with `pnpm demo:real-agent`.
 
 ---
 
@@ -225,7 +227,7 @@ _See [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) and [`docs/THREAT_MODEL.md`](d
 
 - **Agent Runtime:** [Daydreams](https://github.com/daydreamsai/daydreams) (`@daydreamsai/core`)
 - **Execution Engine:** [KeeperHub](https://keeperhub.com) MCP & REST Gateway, Turnkey Non-Custodial Enclaves
-- **Validation & Types:** Strict TypeScript 5.7, Zod 3.24
+- **Validation & Types:** Strict TypeScript 5.7, Zod 4.1
 - **Testing & Verification:** Vitest 3.0, fast-check 3.23 (property-based testing)
 - **Build System:** pnpm 11.21.0, tsup 8.4 (CJS, ESM, DTS)
 
@@ -250,7 +252,8 @@ dreamkeeper/
 │           ├── agent.ts           # Daydreams agent configuration
 │           ├── run-demo.ts        # End-to-end execution walkthrough
 │           ├── test-end-to-end-full.ts # Full 5-action Daydreams + DreamKeeper + KeeperHub E2E
-│           └── test-firewall.ts   # Prompt injection & cap defense showcase
+│           ├── test-firewall.ts   # Prompt injection & cap defense showcase (scripted)
+│           └── test-real-agent.ts # Genuine LLM-driven run via OpenRouter (not scripted)
 ├── docs/
 │   ├── API_NOTES.md               # KeeperHub failure modes & transport semantics
 │   ├── LIMITATIONS.md             # Documented edge cases & boundaries
@@ -289,6 +292,9 @@ pnpm demo:firewall
 
 # 6. Run the full Daydreams + DreamKeeper + KeeperHub 5-action E2E pipeline
 pnpm demo:e2e
+
+# 7. Run a genuine LLM-driven prompt-injection test (requires an OPENROUTER_API_KEY in .env)
+pnpm --filter @dreamkeeper/demo-agent run demo:real-agent
 ```
 
 ---

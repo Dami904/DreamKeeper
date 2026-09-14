@@ -16,7 +16,7 @@ async function main() {
 
   // Register our dreamkeeper extension natively into Daydreams createDreams
   const agent = createDreams({
-    extensions: [extension as any],
+    extensions: [extension],
   });
 
   console.log(

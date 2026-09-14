@@ -30,7 +30,7 @@ async function main() {
     "[Step 2] Mounting extension into native Daydreams createDreams() agent...",
   );
   const agent = createDreams({
-    extensions: [extension as any],
+    extensions: [extension],
   });
 
   console.log(

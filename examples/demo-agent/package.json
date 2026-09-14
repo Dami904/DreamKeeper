@@ -10,14 +10,18 @@
     "start": "tsx src/run-demo.ts",
     "demo:firewall": "tsx src/test-firewall.ts",
     "demo:e2e": "tsx src/test-end-to-end-full.ts",
+    "demo:real-agent": "tsx src/test-real-agent.ts",
     "test:e2e": "tsx src/test-end-to-end-full.ts",
     "live:demo": "tsx --env-file=../../.env src/run-demo.ts --live",
     "live:e2e": "tsx --env-file=../../.env src/test-end-to-end-full.ts --live"
   },
   "dependencies": {
+    "@ai-sdk/google": "^2.0.0",
+    "@ai-sdk/openai": "2.0.0",
     "@daydreamsai/core": "^0.3.22",
     "@dreamkeeper/core": "workspace:*",
-    "zod": "^3.24.2"
+    "ai": "^5.0.30",
+    "zod": "^4.1.5"
   },
   "devDependencies": {
     "tsx": "^4.19.3",

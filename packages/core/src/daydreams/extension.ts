@@ -4,6 +4,11 @@ import { createDaydreamsActions } from "./actions.js";
 
 export interface DreamKeeperExtension {
   name: string;
+  // Daydreams' real Extension type requires `inputs` (unlike actions/outputs/
+  // services/events, which are optional) — without it, createDreams() drops
+  // this extension's contribution entirely instead of erroring, so its
+  // actions never reach the agent's registry.
+  inputs: Record<string, never>;
   client: KeeperHubClient;
   actions: Array<{
     name: string;
@@ -43,6 +48,7 @@ export function dreamkeeperExtension(
 
   return {
     name: "dreamkeeper",
+    inputs: {},
     client,
     actions,
     actionsMap,

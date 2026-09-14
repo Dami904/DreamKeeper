@@ -49,16 +49,21 @@ export class KeeperHubClient {
     if (dependencies?.transport) {
       this.transport = dependencies.transport;
     } else if (config.mode === "live") {
-      if (config.privateKey) {
+      if (config.apiKey) {
+        this.transport = new LiveKeeperHubTransport({
+          endpoint: config.endpoint,
+          apiKey: config.apiKey,
+          network: config.policy.network,
+        });
+      } else if (config.privateKey) {
         this.transport = new OnChainKeeperHubTransport({
           privateKey: config.privateKey as `0x${string}`,
           rpcUrl: config.rpcUrl,
         });
       } else {
-        this.transport = new LiveKeeperHubTransport({
-          endpoint: config.endpoint,
-          apiKey: config.apiKey,
-        });
+        throw new Error(
+          "KeeperHubClient mode 'live' requires either config.apiKey (KeeperHub MCP) or config.privateKey (direct on-chain fallback).",
+        );
       }
     } else {
       this.transport = new MockKeeperHubTransport();

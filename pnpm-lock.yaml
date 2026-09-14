@@ -26,15 +26,24 @@ importers:
 
   examples/demo-agent:
     dependencies:
+      '@ai-sdk/google':
+        specifier: ^2.0.0
+        version: 2.0.0(zod@4.1.5)
+      '@ai-sdk/openai':
+        specifier: 2.0.0
+        version: 2.0.0(zod@4.1.5)
       '@daydreamsai/core':
         specifier: ^0.3.22
         version: 0.3.22(typescript@5.9.3)
       '@dreamkeeper/core':
         specifier: workspace:*
         version: link:../../packages/core
+      ai:
+        specifier: ^5.0.30
+        version: 5.0.30(zod@4.1.5)
       zod:
-        specifier: ^3.24.2
-        version: 3.25.76
+        specifier: ^4.1.5
+        version: 4.1.5
     devDependencies:
       tsx:
         specifier: ^4.19.3
@@ -50,10 +59,10 @@ importers:
         version: 0.3.22(typescript@5.9.3)
       viem:
         specifier: ^2.56.3
-        version: 2.56.3(typescript@5.9.3)(zod@3.25.76)
+        version: 2.56.3(typescript@5.9.3)(zod@4.1.5)
       zod:
-        specifier: ^3.24.2
-        version: 3.25.76
+        specifier: ^4.1.5
+        version: 4.1.5
     devDependencies:
       fast-check:
         specifier: ^3.23.2
@@ -79,11 +88,29 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4
 
+  '@ai-sdk/google@2.0.0':
+    resolution: {integrity: sha512-35uWKG+aWm0QClJV/kNhcyR9IVrDkZoI1UlWvUCjwoqbCxj4/L/1LKKbpM3JSRa9u74ghHzBB0UjLHdgcIoanw==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4
+
+  '@ai-sdk/openai@2.0.0':
+    resolution: {integrity: sha512-G0WY5K81JwGpuX9HEmP2VTdt3N9m43qPnGT4fWkXcpu6Y2B05nnjs8k1r/csCJd8+TkYC6esjBABQYHxdMOejQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4
+
   '@ai-sdk/provider-utils@2.2.2':
     resolution: {integrity: sha512-DgjbBseR6e5oRcXOF0LH9owj3eKDfZNMdyHM8HBfcfQg0IVL2KqL1lK40pQynuI3/u72YM+vvbtAZ78PRj6jCA==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.23.8
+
+  '@ai-sdk/provider-utils@3.0.0':
+    resolution: {integrity: sha512-BoQZtGcBxkeSH1zK+SRYNDtJPIPpacTeiMZqnG4Rv6xXjEwM0FH4MGs9c+PlhyEWmQCzjRM2HAotEydFhD4dYw==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4
 
   '@ai-sdk/provider-utils@3.0.7':
     resolution: {integrity: sha512-o3BS5/t8KnBL3ubP8k3w77AByOypLm+pkIL/DCw0qKkhDbvhCy+L3hRTGPikpdb8WHcylAeKsjgwOxhj4cqTUA==}
@@ -1112,9 +1139,6 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
   zod@4.1.5:
     resolution: {integrity: sha512-rcUUZqlLJgBC33IT3PNMgsCq6TzLQEG/Ei/KTCU0PedSWRMAXoOUN+4t/0H+Q8bdnLPdqUYnvboJT0bn/229qg==}
 
@@ -1128,12 +1152,32 @@ snapshots:
       '@ai-sdk/provider-utils': 3.0.7(zod@4.1.5)
       zod: 4.1.5
 
+  '@ai-sdk/google@2.0.0(zod@4.1.5)':
+    dependencies:
+      '@ai-sdk/provider': 2.0.0
+      '@ai-sdk/provider-utils': 3.0.0(zod@4.1.5)
+      zod: 4.1.5
+
+  '@ai-sdk/openai@2.0.0(zod@4.1.5)':
+    dependencies:
+      '@ai-sdk/provider': 2.0.0
+      '@ai-sdk/provider-utils': 3.0.0(zod@4.1.5)
+      zod: 4.1.5
+
   '@ai-sdk/provider-utils@2.2.2(zod@4.1.5)':
     dependencies:
       '@ai-sdk/provider': 1.1.0
       nanoid: 3.3.18
       secure-json-parse: 2.7.0
       zod: 4.1.5
+
+  '@ai-sdk/provider-utils@3.0.0(zod@4.1.5)':
+    dependencies:
+      '@ai-sdk/provider': 2.0.0
+      '@standard-schema/spec': 1.1.0
+      eventsource-parser: 3.1.1
+      zod: 4.1.5
+      zod-to-json-schema: 3.25.2(zod@4.1.5)
 
   '@ai-sdk/provider-utils@3.0.7(zod@4.1.5)':
     dependencies:
@@ -1500,11 +1544,6 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 2.0.0
 
-  abitype@1.2.3(typescript@5.9.3)(zod@3.25.76):
-    optionalDependencies:
-      typescript: 5.9.3
-      zod: 3.25.76
-
   abitype@1.2.3(typescript@5.9.3)(zod@4.1.5):
     optionalDependencies:
       typescript: 5.9.3
@@ -1687,21 +1726,6 @@ snapshots:
 
   object-assign@4.1.1: {}
 
-  ox@0.14.44(typescript@5.9.3)(zod@3.25.76):
-    dependencies:
-      '@adraffy/ens-normalize': 1.11.1
-      '@noble/ciphers': 1.3.0
-      '@noble/curves': 1.9.1
-      '@noble/hashes': 1.8.0
-      '@scure/bip32': 1.7.0
-      '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
-      eventemitter3: 5.0.1
-    optionalDependencies:
-      typescript: 5.9.3
-    transitivePeerDependencies:
-      - zod
-
   ox@0.14.44(typescript@5.9.3)(zod@4.1.5):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
@@ -1883,23 +1907,6 @@ snapshots:
 
   uuid@11.1.0: {}
 
-  viem@2.56.3(typescript@5.9.3)(zod@3.25.76):
-    dependencies:
-      '@noble/curves': 1.9.1
-      '@noble/hashes': 1.8.0
-      '@scure/bip32': 1.7.0
-      '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
-      isows: 1.0.7(ws@8.21.0)
-      ox: 0.14.44(typescript@5.9.3)(zod@3.25.76)
-      ws: 8.21.0
-    optionalDependencies:
-      typescript: 5.9.3
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-      - zod
-
   viem@2.56.3(typescript@5.9.3)(zod@4.1.5):
     dependencies:
       '@noble/curves': 1.9.1
@@ -2002,7 +2009,5 @@ snapshots:
   zod-to-json-schema@3.25.2(zod@4.1.5):
     dependencies:
       zod: 4.1.5
-
-  zod@3.25.76: {}
 
   zod@4.1.5: {}
