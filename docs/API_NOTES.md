@@ -83,6 +83,25 @@ Real error shapes observed (both correctly handled by treating `parsed.error` as
 
 Also note: `execute_protocol_action`'s `params` object carries its own `network` field — DreamKeeper's firewall does **not** cross-check this against `FirewallPolicy.network`, so a protocol action's target chain is not currently policy-gated, only its `actionType` is.
 
+### `get_spending_limits` — read-only, org-level daily cap
+
+Verified directly against the real tool with a fully-scoped API key. Response (`content[0].text`, JSON):
+
+```json
+{
+  "dailyCapWei": null,
+  "dailyUsedWei": "0",
+  "dailySolanaCapLamports": null,
+  "dailySolanaUsedLamports": "0",
+  "effectiveDailyCapWei": "20000000000000000",
+  "effectiveDailySolanaCapLamports": "500000000",
+  "usingDefaultDailyCap": true,
+  "usingDefaultDailySolanaCap": true
+}
+```
+
+`dailyCapWei`/`dailySolanaCapLamports` are `null` when the organization hasn't set its own explicit cap — `effectiveDailyCapWei`/`effectiveDailySolanaCapLamports` are what's actually enforced in that case (a KeeperHub-side default; here `0.02 ETH` and `0.5 SOL`), and `usingDefaultDailyCap`/`usingDefaultDailySolanaCap` are `true` to indicate the effective value came from the default rather than an org-configured one. Takes no parameters. Our session's own OAuth-scoped `mcp__keeperhub__*` tools returned 401 for this call (evidently a privileged/write-scoped tool despite being read-only); DreamKeeper's own `.env` `KEEPERHUB_API_KEY` has the required scope.
+
 ### Auth / error responses
 
 A bad or missing API key does **not** produce a flat `{"error": "invalid_token"}` — an earlier version of this doc and of `live-transport.ts` assumed this shape and never observed a real failure. What we've verified: an invalid/empty key still gets past `initialize` in some cases and fails later with a `"Missing or invalid API key"`-style message inside the tool response; a fully absent/malformed key can also produce an HTTP 401/403 on `initialize` itself. Treat both as auth failures.

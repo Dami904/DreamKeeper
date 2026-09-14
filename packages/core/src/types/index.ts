@@ -178,6 +178,25 @@ export interface ProtocolActionIntent {
 }
 
 /**
+ * KeeperHub's own server-side daily direct-execution spending caps, a second
+ * enforcement layer independent of this repo's local FirewallPolicy. A
+ * `undefined` dailyCapWei/dailySolanaCapLamports means the org has not set
+ * its own cap — NOT that spending is unlimited. `effectiveDailyCapWei`/
+ * `effectiveDailySolanaCapLamports` are what KeeperHub actually enforces
+ * (the org's own cap if set, otherwise the platform default).
+ */
+export interface SpendingLimits {
+  dailyCapWei: bigint | undefined;
+  dailyUsedWei: bigint;
+  dailySolanaCapLamports: bigint | undefined;
+  dailySolanaUsedLamports: bigint;
+  effectiveDailyCapWei: bigint;
+  effectiveDailySolanaCapLamports: bigint;
+  usingDefaultDailyCap: boolean;
+  usingDefaultDailySolanaCap: boolean;
+}
+
+/**
  * Execution result with 3-state confirmation
  */
 export interface ExecutionResult {
@@ -337,3 +356,5 @@ export const ReconcileActionSchema = z.object({
 export const AuditActionSchema = z.object({
   runId: z.string().min(1),
 });
+
+export const GetSpendingLimitsActionSchema = z.object({});

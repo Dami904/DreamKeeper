@@ -9,6 +9,7 @@ import type {
   ExecutionIntent,
   ExecutionResult,
   ProtocolActionIntent,
+  SpendingLimits,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
@@ -311,5 +312,20 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
 
   public async getAudit(runId: string): Promise<AuditEntry | undefined> {
     return this.audits.get(runId);
+  }
+
+  public async getSpendingLimits(): Promise<SpendingLimits | undefined> {
+    // No org-level cap concept exists in mock mode; a generous static value
+    // that never blocks a test, distinct from a "no limit configured" undefined.
+    return {
+      dailyCapWei: undefined,
+      dailyUsedWei: 0n,
+      dailySolanaCapLamports: undefined,
+      dailySolanaUsedLamports: 0n,
+      effectiveDailyCapWei: 20_000_000_000_000_000n,
+      effectiveDailySolanaCapLamports: 500_000_000n,
+      usingDefaultDailyCap: true,
+      usingDefaultDailySolanaCap: true,
+    };
   }
 }

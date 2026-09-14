@@ -9,6 +9,7 @@ import type {
   ExecutionResult,
   KeeperHubConfig,
   ProtocolActionIntent,
+  SpendingLimits,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { MockKeeperHubTransport } from "./mock-transport.js";
@@ -314,6 +315,15 @@ export class KeeperHubClient {
     }
 
     return result;
+  }
+
+  /**
+   * Reads KeeperHub's own server-side daily spending caps and current usage
+   * — a second, independent enforcement layer alongside this repo's local
+   * FirewallPolicy. Read-only; nothing to firewall-gate.
+   */
+  public async getSpendingLimits(): Promise<SpendingLimits | undefined> {
+    return this.transport.getSpendingLimits();
   }
 
   /**

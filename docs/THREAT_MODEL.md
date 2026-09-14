@@ -51,6 +51,11 @@ This document defines who is trusted, who is untrusted, and how assets are secur
   1. `maxCumulativeDailySpend` caps volume over a genuine **rolling 24-hour window** (`FirewallValidator.getRolling24hSpend()` sums timestamped spend records newer than `now - 24h`) — not a fixed 24-hour lockout that starts once the cap is hit. Capacity frees up continuously as older spend ages out of the window.
   2. The Local Circuit Breaker trips after 3 consecutive failures or 2 consecutive unknowns (pure consecutive counts, no time window), locking all writes for a 15-minute cooldown before a `HALF_OPEN` trial.
 
+### Threat 5: Local Firewall State Is Wiped or Bypassed
+
+- **Attack Vector**: This repo's own `FirewallValidator`/spend-tracking state is in-memory only (see `docs/LIMITATIONS.md`). A process restart, a bug that skips the firewall call, or a second DreamKeeper instance running against the same KeeperHub organization would each reset or bypass the local rolling-24h spend cap with nothing to catch it.
+- **Mitigation**: KeeperHub itself enforces a **second, independent daily spending cap**, tracked server-side against the organization rather than this process's memory. `KeeperHubClient.getSpendingLimits()` (exposed to agents as the `keeperhub_get_spending_limits` action) reads it via the real `get_spending_limits` MCP tool: `effectiveDailyCapWei`/`effectiveDailySolanaCapLamports` report the cap actually enforced (an org-set `dailyCapWei`/`dailySolanaCapLamports` when configured, otherwise a KeeperHub-side default — `usingDefaultDailyCap`/`usingDefaultDailySolanaCap` indicate which), alongside `dailyUsedWei`/`dailySolanaUsedLamports` for usage so far. This is read-only and purely informational to this repo — DreamKeeper does not locally re-derive or pre-empt it — but because KeeperHub enforces it on its own side at broadcast time, a reset or bypass of this repo's in-memory firewall state does not on its own let spend exceed KeeperHub's cap. This layer only applies on the `LiveKeeperHubTransport` (real KeeperHub) path; the direct on-chain fallback (`OnChainKeeperHubTransport`) has no organization concept and returns `undefined` for spending limits, relying solely on the local firewall.
+
 ---
 
 ## 3. Key Management & Custody

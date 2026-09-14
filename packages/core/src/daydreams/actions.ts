@@ -7,6 +7,7 @@ import {
   CheckAndExecuteDryRunActionSchema,
   CheckAndExecuteExecuteActionSchema,
   ProtocolActionSchema,
+  GetSpendingLimitsActionSchema,
 } from "../types/index.js";
 import { StructuredLogger } from "../logger/index.js";
 
@@ -395,6 +396,44 @@ export function createDaydreamsActions(client: KeeperHubClient) {
     },
   };
 
+  const getSpendingLimitsAction: DaydreamsActionDefinition<
+    typeof GetSpendingLimitsActionSchema,
+    any
+  > = {
+    name: "keeperhub_get_spending_limits",
+    description:
+      "Read KeeperHub's own server-side daily spending caps and current usage for this organization. " +
+      "This is a second, independent enforcement layer alongside the Hallucination Firewall's local policy " +
+      "— KeeperHub itself refuses to execute past its own daily cap even if the local firewall would allow " +
+      "it. Read-only; takes no parameters.",
+    schema: GetSpendingLimitsActionSchema,
+    handler: async () => {
+      logger.info("Executing keeperhub_get_spending_limits tool call");
+
+      const limits = await client.getSpendingLimits();
+      if (!limits) {
+        return {
+          available: false,
+          message:
+            "KeeperHub spending limits are not available on this transport (mock/on-chain fallback modes have no organization-level cap).",
+        };
+      }
+
+      return {
+        available: true,
+        dailyCapWei: limits.dailyCapWei?.toString(),
+        dailyUsedWei: limits.dailyUsedWei.toString(),
+        dailySolanaCapLamports: limits.dailySolanaCapLamports?.toString(),
+        dailySolanaUsedLamports: limits.dailySolanaUsedLamports.toString(),
+        effectiveDailyCapWei: limits.effectiveDailyCapWei.toString(),
+        effectiveDailySolanaCapLamports:
+          limits.effectiveDailySolanaCapLamports.toString(),
+        usingDefaultDailyCap: limits.usingDefaultDailyCap,
+        usingDefaultDailySolanaCap: limits.usingDefaultDailySolanaCap,
+      };
+    },
+  };
+
   return {
     dryRunAction,
     executeAction,
@@ -403,5 +442,6 @@ export function createDaydreamsActions(client: KeeperHubClient) {
     checkAndExecuteDryRunAction,
     checkAndExecuteAction,
     protocolActionAction,
+    getSpendingLimitsAction,
   };
 }

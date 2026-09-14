@@ -9,6 +9,7 @@ import type {
   ExecutionIntent,
   ExecutionResult,
   ProtocolActionIntent,
+  SpendingLimits,
   SupportedNetwork,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
@@ -1301,5 +1302,62 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     });
 
     return result;
+  }
+
+  public async getSpendingLimits(): Promise<SpendingLimits | undefined> {
+    const call = await this.callTool("get_spending_limits", {});
+
+    if (this.isAuthError(call)) {
+      logger.error("KeeperHub get_spending_limits auth failure");
+      return undefined;
+    }
+
+    if (call.timedOut || call.error || call.rpcError || call.isToolError) {
+      logger.warn("KeeperHub get_spending_limits request failed", {
+        context: {
+          error: call.error?.message,
+          rpcError: call.rpcError,
+          rawText: call.text,
+        },
+      });
+      return undefined;
+    }
+
+    const p = call.parsed;
+    if (!p) {
+      logger.warn("KeeperHub get_spending_limits returned no parseable body", {
+        context: { rawText: call.text },
+      });
+      return undefined;
+    }
+
+    try {
+      return {
+        dailyCapWei: p.dailyCapWei != null ? BigInt(p.dailyCapWei) : undefined,
+        dailyUsedWei: BigInt(p.dailyUsedWei ?? "0"),
+        dailySolanaCapLamports:
+          p.dailySolanaCapLamports != null
+            ? BigInt(p.dailySolanaCapLamports)
+            : undefined,
+        dailySolanaUsedLamports: BigInt(p.dailySolanaUsedLamports ?? "0"),
+        effectiveDailyCapWei: BigInt(p.effectiveDailyCapWei ?? "0"),
+        effectiveDailySolanaCapLamports: BigInt(
+          p.effectiveDailySolanaCapLamports ?? "0",
+        ),
+        usingDefaultDailyCap: p.usingDefaultDailyCap === true,
+        usingDefaultDailySolanaCap: p.usingDefaultDailySolanaCap === true,
+      };
+    } catch (err: unknown) {
+      logger.error(
+        "KeeperHub get_spending_limits returned non-integer fields",
+        {
+          context: {
+            rawText: call.text,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        },
+      );
+      return undefined;
+    }
   }
 }

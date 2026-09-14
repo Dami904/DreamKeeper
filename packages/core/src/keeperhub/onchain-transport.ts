@@ -20,6 +20,7 @@ import type {
   ExecutionIntent,
   ExecutionResult,
   ProtocolActionIntent,
+  SpendingLimits,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
@@ -589,5 +590,10 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
       error:
         "Protocol actions require the real KeeperHub MCP path (KEEPERHUB_API_KEY) — there is no direct on-chain fallback for KeeperHub's curated protocol integrations.",
     };
+  }
+
+  public async getSpendingLimits(): Promise<SpendingLimits | undefined> {
+    // No org-level cap concept exists outside KeeperHub's own platform.
+    return undefined;
   }
 }

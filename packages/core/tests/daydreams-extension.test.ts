@@ -33,9 +33,9 @@ describe("Daydreams Extension & Action Handlers", () => {
     ).createDaydreamsActions(client);
   });
 
-  it("exposes all 7 required Daydreams action tools", () => {
+  it("exposes all 8 required Daydreams action tools", () => {
     expect(extension.name).toBe("dreamkeeper");
-    expect(extension.actionsList).toHaveLength(7);
+    expect(extension.actionsList).toHaveLength(8);
     const names = extension.actionsList.map((a) => a.name);
     expect(names).toContain("keeperhub_dry_run");
     expect(names).toContain("keeperhub_execute");
@@ -44,6 +44,7 @@ describe("Daydreams Extension & Action Handlers", () => {
     expect(names).toContain("keeperhub_check_and_execute_dry_run");
     expect(names).toContain("keeperhub_check_and_execute");
     expect(names).toContain("keeperhub_protocol_action");
+    expect(names).toContain("keeperhub_get_spending_limits");
   });
 
   describe("keeperhub_dry_run Action", () => {

@@ -7,6 +7,7 @@ import type {
   ExecutionIntent,
   ExecutionResult,
   ProtocolActionIntent,
+  SpendingLimits,
 } from "../types/index.js";
 
 export interface KeeperHubTransport {
@@ -51,4 +52,12 @@ export interface KeeperHubTransport {
    * immediately.
    */
   executeProtocolAction(intent: ProtocolActionIntent): Promise<ExecutionResult>;
+
+  /**
+   * Reads KeeperHub's own server-side daily spending caps and current usage
+   * — a second enforcement layer independent of this repo's local
+   * FirewallPolicy. Only meaningful on the real KeeperHub path; mock/on-chain
+   * transports have no such concept and return a static "no cap" shape.
+   */
+  getSpendingLimits(): Promise<SpendingLimits | undefined>;
 }
