@@ -31,13 +31,14 @@ This document states plainly what DreamKeeper explicitly does and does not handl
 
 - Invariant evaluation relies on KeeperHub's simulation node state fork. If an off-chain price feed or decentralized oracle updates between the simulation block and the private mempool inclusion block, minor slippage variance can occur within the configured `maxSlippageBps`.
 
-### D. Daydreams Memory Store
+### D. Idempotency & Circuit Breaker State Is In-Memory Only
 
-- DreamKeeper's local idempotency and circuit breaker states default to in-memory with optional SQLite/JSON file persistence. In stateless serverless environments (e.g., AWS Lambda), an external persistent database (PostgreSQL/Redis) must be configured to survive container destruction.
+- The shipped `MemoryIdempotencyStore` and `CircuitBreaker` hold all state in process memory — there is no built-in SQLite, JSON-file, Redis, or PostgreSQL persistence in this codebase today. Restarting the process (or, in a serverless environment like AWS Lambda, losing the container) resets the idempotency table and circuit breaker to a clean slate, discarding in-flight `UNKNOWN` executions and any tripped/`OPEN` state. Implement the `IdempotencyStore` interface (`packages/core/src/keeperhub/idempotency.ts`) against a real database before running this in a multi-instance or serverless deployment.
 
 ---
 
 ## 3. What Still Breaks or Is Unfinished (Hackathon Candid Disclosure)
 
-- **Dynamic Gas Spikes Above Global Ceiling**: If network gas escalates higher than the user's hard-configured `maxGasPriceGwei`, KeeperHub safely holds the transaction in queue rather than overpaying. If the gas spike persists longer than the agent's task deadline, the task will transition to `TIMED_OUT`.
+- **No Gas-Price Ceiling Config Today**: There is currently no `maxGasPriceGwei` (or equivalent) setting in `FirewallPolicy`, and no `TIMED_OUT` execution state — `ExecutionState` is strictly `CONFIRMED` / `FAILED` / `UNKNOWN`. Gas-spike handling is left entirely to whichever transport is active (KeeperHub's own smart gas repricing on the live path, or `viem`'s defaults on the direct-signer fallback); DreamKeeper's own code does not yet hold or queue a transaction pending a gas ceiling.
 - **Custom Token Decimals**: Non-standard ERC-20 tokens (e.g., fee-on-transfer tokens, rebase tokens, or tokens with dynamic transfer taxes) require explicit configuration in the firewall policy to avoid false-positive invariant rejections.
+- **`LiveKeeperHubTransport` Response Parsing Is Best-Effort Beyond the Cases We've Observed**: The real KeeperHub MCP response shape (`content[0].text` embedding JSON, `execution_id`/`get_direct_execution_status` polling) was reverse-engineered from an actual live simulate/execute/status round trip — see `docs/API_NOTES.md`. Field names for cases we haven't triggered ourselves (e.g., the exact terminal shape of a `failed` `get_direct_execution_status` response) are still best-effort guesses and should be re-verified against a real failure before being relied on.

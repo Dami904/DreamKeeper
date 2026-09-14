@@ -54,6 +54,15 @@ interface ToolCallResult {
   timedOut?: boolean | undefined;
 }
 
+interface PendingIntent {
+  recipient: string;
+  amount: bigint;
+  token?: string | undefined;
+}
+
+type BroadcastResult =
+  { ok: true; executionId: string } | { ok: false; result: ExecutionResult };
+
 export class LiveKeeperHubTransport implements KeeperHubTransport {
   private endpoint: string;
   private apiKey?: string | undefined;
@@ -71,6 +80,13 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
   // can resume polling get_direct_execution_status without the caller needing to
   // track KeeperHub's own identifier.
   private executionIds = new Map<string, string>();
+  // Transfer parameters, keyed by idempotencyKey, recorded *before* the network
+  // call is fired. If that call never gets far enough to yield an execution_id
+  // (network drop, timeout), reconcile() uses this to safely retry
+  // execute_transfer with the same idempotency_key — KeeperHub's idempotency
+  // guarantee makes that a status lookup, not a second broadcast — rather than
+  // being permanently unable to resolve an UNKNOWN execution.
+  private pendingIntents = new Map<string, PendingIntent>();
   // Audit trail synthesized locally: KeeperHub's MCP surface has no direct-execution
   // audit-log endpoint distinct from get_direct_execution_status.
   private audits = new Map<string, AuditEntry>();
@@ -160,6 +176,9 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
 
     if (res.status === 401 || res.status === 403) {
       this.sessionPromise = undefined;
+      logger.error("KeeperHub rejected the API key during session initialize", {
+        context: { status: res.status },
+      });
       return {
         ok: false,
         authError: true,
@@ -169,18 +188,20 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
 
     if (res.error || res.timedOut || res.data?.error) {
       this.sessionPromise = undefined;
-      return {
-        ok: false,
-        error:
-          res.data?.error?.message ||
-          res.error?.message ||
-          "Failed to initialize KeeperHub MCP session.",
-      };
+      const message =
+        res.data?.error?.message ||
+        res.error?.message ||
+        "Failed to initialize KeeperHub MCP session.";
+      logger.error("KeeperHub MCP session initialize failed", {
+        context: { status: res.status, message },
+      });
+      return { ok: false, error: message };
     }
 
     const sessionId = res.headers.get("mcp-session-id");
     if (!sessionId) {
       this.sessionPromise = undefined;
+      logger.error("KeeperHub did not return an Mcp-Session-Id header");
       return {
         ok: false,
         error: "KeeperHub did not return an Mcp-Session-Id header.",
@@ -310,10 +331,20 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     });
 
     if (this.isAuthError(call)) {
+      logger.error("KeeperHub dryRun auth failure", {
+        context: { recipient: intent.recipient },
+      });
       return { ok: false, error: this.authErrorMessage() };
     }
 
     if (call.timedOut || call.error) {
+      logger.error("KeeperHub dryRun simulation request failed", {
+        context: {
+          recipient: intent.recipient,
+          error: call.error?.message,
+          timedOut: call.timedOut,
+        },
+      });
       return {
         ok: false,
         error: `Simulation request failed: ${call.error?.message || "Network timeout"}`,
@@ -321,6 +352,9 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     }
 
     if (call.rpcError) {
+      logger.error("KeeperHub dryRun request rejected at the RPC layer", {
+        context: { recipient: intent.recipient, rpcError: call.rpcError },
+      });
       return {
         ok: false,
         error: call.rpcError.message || "KeeperHub simulation request failed.",
@@ -331,6 +365,13 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     const wouldRevert = call.parsed?.wouldRevert === true;
 
     if (call.isToolError || !success || wouldRevert) {
+      logger.warn("KeeperHub dryRun simulation reverted or failed", {
+        context: {
+          recipient: intent.recipient,
+          revertReason: call.parsed?.revertReason,
+          rawText: call.text,
+        },
+      });
       return {
         ok: false,
         revertReason:
@@ -345,12 +386,30 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       };
     }
 
-    const estimatedGasUnits = BigInt(
-      call.parsed?.estimatedGasUnits || call.parsed?.gasUsed || "65000",
-    );
-    const projectedDelta = BigInt(
-      call.parsed?.projectedDelta || `-${intent.amount}`,
-    );
+    let estimatedGasUnits: bigint;
+    let projectedDelta: bigint;
+    try {
+      estimatedGasUnits = BigInt(
+        call.parsed?.estimatedGasUnits || call.parsed?.gasUsed || "65000",
+      );
+      projectedDelta = BigInt(
+        call.parsed?.projectedDelta || `-${intent.amount}`,
+      );
+    } catch (err: unknown) {
+      logger.error("KeeperHub dryRun returned non-integer numeric fields", {
+        context: {
+          recipient: intent.recipient,
+          estimatedGasUnits: call.parsed?.estimatedGasUnits,
+          projectedDelta: call.parsed?.projectedDelta,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
+      return {
+        ok: false,
+        error:
+          "KeeperHub returned a non-integer numeric field in the simulation response.",
+      };
+    }
 
     // KeeperHub's simulate response has no notion of DreamKeeper's own
     // hash-bound DryRunToken — that binding is DreamKeeper's firewall
@@ -380,6 +439,105 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     };
   }
 
+  /**
+   * Calls execute_transfer for real (simulate omitted) and classifies the
+   * result. Shared by execute() and reconcile()'s recovery path so both go
+   * through identical error handling and logging.
+   */
+  private async broadcastExecuteTransfer(
+    idempotencyKey: string,
+    intent: PendingIntent,
+  ): Promise<BroadcastResult> {
+    const call = await this.callTool("execute_transfer", {
+      chain_id: this.chainId,
+      to_address: intent.recipient,
+      amount: (Number(intent.amount) / 1e6).toString(),
+      ...(intent.token ? { token_address: intent.token } : {}),
+      idempotency_key: idempotencyKey,
+      simulate: false,
+    });
+
+    if (this.isAuthError(call)) {
+      logger.error("KeeperHub execute_transfer auth failure", {
+        idempotencyKey,
+      });
+      return {
+        ok: false,
+        result: {
+          state: "FAILED",
+          idempotencyKey,
+          error: this.authErrorMessage(),
+        },
+      };
+    }
+
+    if (call.timedOut || call.error || call.rpcError) {
+      logger.error("KeeperHub execute_transfer network/RPC failure", {
+        idempotencyKey,
+        context: {
+          status: call.status,
+          error: call.error?.message,
+          rpcError: call.rpcError,
+        },
+      });
+      return {
+        ok: false,
+        result: {
+          state: "UNKNOWN",
+          idempotencyKey,
+          error:
+            call.rpcError?.message ||
+            call.error?.message ||
+            "Network timeout awaiting KeeperHub execution response.",
+        },
+      };
+    }
+
+    if (call.isToolError || call.parsed?.success === false) {
+      logger.warn("KeeperHub execute_transfer rejected the request", {
+        idempotencyKey,
+        context: {
+          revertReason: call.parsed?.revertReason,
+          rawText: call.text,
+        },
+      });
+      return {
+        ok: false,
+        result: {
+          state: "FAILED",
+          idempotencyKey,
+          revertReason: call.parsed?.revertReason || call.parsed?.failureKind,
+          error:
+            call.parsed?.error ||
+            call.parsed?.originalError ||
+            call.text ||
+            "KeeperHub execution failed.",
+        },
+      };
+    }
+
+    const executionId: string | undefined =
+      call.parsed?.execution_id || call.parsed?.executionId || call.parsed?.id;
+
+    if (!executionId) {
+      logger.warn("KeeperHub execute_transfer response had no execution_id", {
+        idempotencyKey,
+        context: { rawText: call.text },
+      });
+      return {
+        ok: false,
+        result: {
+          state: "UNKNOWN",
+          idempotencyKey,
+          error:
+            "KeeperHub did not return a recognizable execution_id for this request; verify response shape once a live success sample is available.",
+        },
+      };
+    }
+
+    return { ok: true, executionId };
+  }
+
   public async execute(
     intent: ExecutionIntent,
     _dryRunResult?: DryRunResult,
@@ -392,74 +550,40 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       },
     });
 
-    const call = await this.callTool("execute_transfer", {
-      chain_id: this.chainId,
-      to_address: intent.recipient,
-      amount: (Number(intent.amount) / 1e6).toString(),
-      ...(intent.token ? { token_address: intent.token } : {}),
-      idempotency_key: intent.idempotencyKey,
-      simulate: false,
+    // Recorded *before* the network call, so that if the call itself times
+    // out or drops (never yielding an execution_id), reconcile() can still
+    // safely retry execute_transfer with this same idempotency_key later.
+    this.pendingIntents.set(intent.idempotencyKey, {
+      recipient: intent.recipient,
+      amount: intent.amount,
+      token: intent.token,
     });
 
-    if (this.isAuthError(call)) {
-      return {
-        state: "FAILED",
-        idempotencyKey: intent.idempotencyKey,
-        error: this.authErrorMessage(),
-      };
+    const broadcast = await this.broadcastExecuteTransfer(
+      intent.idempotencyKey,
+      {
+        recipient: intent.recipient,
+        amount: intent.amount,
+        token: intent.token,
+      },
+    );
+
+    if (!broadcast.ok) {
+      return broadcast.result;
     }
 
-    if (call.timedOut || call.error || call.rpcError) {
-      return {
-        state: "UNKNOWN",
-        idempotencyKey: intent.idempotencyKey,
-        error:
-          call.rpcError?.message ||
-          call.error?.message ||
-          "Network timeout awaiting KeeperHub execution response.",
-      };
-    }
-
-    if (call.isToolError || call.parsed?.success === false) {
-      return {
-        state: "FAILED",
-        idempotencyKey: intent.idempotencyKey,
-        revertReason: call.parsed?.revertReason || call.parsed?.failureKind,
-        error:
-          call.parsed?.error ||
-          call.parsed?.originalError ||
-          call.text ||
-          "KeeperHub execution failed.",
-      };
-    }
-
-    const executionId: string | undefined =
-      call.parsed?.execution_id || call.parsed?.executionId || call.parsed?.id;
-
-    if (!executionId) {
-      logger.warn("KeeperHub execute_transfer response had no execution_id", {
-        context: { rawText: call.text },
-      });
-      return {
-        state: "UNKNOWN",
-        idempotencyKey: intent.idempotencyKey,
-        error:
-          "KeeperHub did not return a recognizable execution_id for this request; verify response shape once a live success sample is available.",
-      };
-    }
-
-    this.executionIds.set(intent.idempotencyKey, executionId);
+    this.executionIds.set(intent.idempotencyKey, broadcast.executionId);
 
     // Poll get_direct_execution_status with bounded backoff, per KeeperHub's
     // documented direct-execution flow. If it's still non-terminal after the
     // budget, return UNKNOWN — the caller (keeperhub_reconcile) can resume
     // polling later via reconcile() without re-broadcasting.
-    const polled = await this.pollExecutionStatus(executionId);
+    const polled = await this.pollExecutionStatus(broadcast.executionId);
 
     const result: ExecutionResult = {
       state: polled.state,
       idempotencyKey: intent.idempotencyKey,
-      runId: executionId,
+      runId: broadcast.executionId,
       txHash: polled.txHash,
       explorerUrl: polled.explorerUrl,
       error: polled.error,
@@ -467,8 +591,8 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       confirmedAt: polled.state === "CONFIRMED" ? Date.now() : undefined,
     };
 
-    this.audits.set(executionId, {
-      runId: executionId,
+    this.audits.set(broadcast.executionId, {
+      runId: broadcast.executionId,
       idempotencyKey: intent.idempotencyKey,
       state: result.state,
       timestamp: Date.now(),
@@ -488,6 +612,9 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     error?: string | undefined;
     revertReason?: string | undefined;
   }> {
+    let transportFailures = 0;
+    let lastFailureReason: string | undefined;
+
     for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
       if (attempt > 0) {
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
@@ -503,6 +630,19 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
         call.rpcError ||
         this.isAuthError(call)
       ) {
+        transportFailures++;
+        lastFailureReason =
+          call.rpcError?.message ||
+          call.error?.message ||
+          (this.isAuthError(call) ? "auth error" : "unknown transport failure");
+        logger.warn("get_direct_execution_status poll attempt failed", {
+          context: {
+            executionId,
+            attempt: attempt + 1,
+            of: POLL_ATTEMPTS,
+            reason: lastFailureReason,
+          },
+        });
         continue;
       }
 
@@ -527,6 +667,13 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       // pending / running / unconfirmed: not terminal, keep polling.
     }
 
+    if (transportFailures === POLL_ATTEMPTS) {
+      return {
+        state: "UNKNOWN",
+        error: `All ${POLL_ATTEMPTS} status polls failed (last: ${lastFailureReason}) — investigate KeeperHub connectivity before assuming this execution is merely pending.`,
+      };
+    }
+
     return {
       state: "UNKNOWN",
       error:
@@ -539,13 +686,37 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       idempotencyKey,
     });
 
-    const executionId = this.executionIds.get(idempotencyKey);
+    let executionId = this.executionIds.get(idempotencyKey);
+
     if (!executionId) {
-      return {
-        state: "UNKNOWN",
+      const pending = this.pendingIntents.get(idempotencyKey);
+      if (!pending) {
+        return {
+          state: "UNKNOWN",
+          idempotencyKey,
+          error:
+            "No KeeperHub execution_id or pending intent on record for this idempotency key.",
+        };
+      }
+
+      // The original execute() call never got far enough to record an
+      // execution_id (network drop/timeout). Retrying execute_transfer with
+      // the same idempotency_key is safe per KeeperHub's idempotency
+      // guarantee — it resolves to the existing execution rather than
+      // broadcasting a second transfer.
+      logger.warn(
+        "No execution_id on record; retrying execute_transfer with the same idempotency_key to recover it",
+        { idempotencyKey },
+      );
+      const broadcast = await this.broadcastExecuteTransfer(
         idempotencyKey,
-        error: "No KeeperHub execution_id on record for this idempotency key.",
-      };
+        pending,
+      );
+      if (!broadcast.ok) {
+        return broadcast.result;
+      }
+      executionId = broadcast.executionId;
+      this.executionIds.set(idempotencyKey, executionId);
     }
 
     const polled = await this.pollExecutionStatus(executionId);

@@ -227,6 +227,10 @@ export class KeeperHubClient {
 
     if (result.state === "CONFIRMED") {
       this.circuitBreaker.recordSuccess();
+    } else if (result.state === "FAILED") {
+      this.circuitBreaker.recordFailure(result.revertReason || result.error);
+    } else if (result.state === "UNKNOWN") {
+      this.circuitBreaker.recordUnknown(result.error);
     }
 
     return result;
