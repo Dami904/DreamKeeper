@@ -34,6 +34,32 @@ interface DailySpendEntry {
   timestamp: number;
 }
 
+/**
+ * Calculates the SHA-256 hash binding an intent to a dry-run token.
+ *
+ * Exported standalone (not just as a FirewallValidator method) because every
+ * transport (mock/live/on-chain) also builds this same hash locally when
+ * constructing the DryRunToken it returns from dryRun() — they must all stay
+ * byte-for-byte identical to FirewallValidator's own computation, or
+ * validateExecution()'s token.intentHash comparison will spuriously fail
+ * (DRY_RUN_INTENT_MISMATCH) even for an untampered intent. One shared
+ * function is used everywhere instead of four duplicated copies.
+ */
+export function computeIntentHash(
+  intent: DryRunIntent | ExecutionIntent,
+): string {
+  const canonical = JSON.stringify({
+    recipient: intent.recipient.toLowerCase(),
+    amount: intent.amount.toString(),
+    calldata: intent.calldata?.toLowerCase() || "",
+    token: intent.token?.toLowerCase() || "",
+    method: intent.method?.toLowerCase() || "",
+    functionArgs: intent.functionArgs || "",
+    abi: intent.abi || "",
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
 export class FirewallValidator {
   private policy: FirewallPolicy;
   private spendHistory: DailySpendEntry[] = [];
@@ -55,13 +81,7 @@ export class FirewallValidator {
    * Calculates SHA-256 hash of an intent to bind it to a dry-run token
    */
   public computeIntentHash(intent: DryRunIntent | ExecutionIntent): string {
-    const canonical = JSON.stringify({
-      recipient: intent.recipient.toLowerCase(),
-      amount: intent.amount.toString(),
-      calldata: intent.calldata?.toLowerCase() || "",
-      token: intent.token?.toLowerCase() || "",
-    });
-    return createHash("sha256").update(canonical).digest("hex");
+    return computeIntentHash(intent);
   }
 
   /**
@@ -161,11 +181,14 @@ export class FirewallValidator {
     intent: ExecutionIntent,
     token?: DryRunToken,
   ): ValidationResult {
-    // 1. Re-validate base policy invariants
+    // 1. Re-validate base policy invariants (including method whitelist,
+    // previously silently skipped here since ExecutionIntent had no `method`
+    // field to pass through)
     const baseValidation = this.validateIntent({
       recipient: intent.recipient,
       amount: intent.amount,
       calldata: intent.calldata,
+      method: intent.method,
     });
     if (!baseValidation.valid) {
       return baseValidation;

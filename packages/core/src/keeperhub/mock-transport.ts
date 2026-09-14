@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   DryRunIntent,
@@ -10,6 +10,7 @@ import type {
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
 import { InvariantEvaluator } from "../firewall/invariants.js";
+import { computeIntentHash } from "../firewall/validator.js";
 
 export interface MockTransportScenario {
   forceSimulationRevert?: boolean;
@@ -80,13 +81,7 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
     }
 
     // 4. Issue a valid DryRunToken
-    const canonical = JSON.stringify({
-      recipient: intent.recipient.toLowerCase(),
-      amount: intent.amount.toString(),
-      calldata: intent.calldata?.toLowerCase() || "",
-      token: intent.token?.toLowerCase() || "",
-    });
-    const intentHash = createHash("sha256").update(canonical).digest("hex");
+    const intentHash = computeIntentHash(intent);
 
     const token: DryRunToken = {
       tokenId: `drt_${randomUUID().slice(0, 12)}`,

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   DryRunIntent,
@@ -10,6 +10,7 @@ import type {
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { InvariantEvaluator } from "../firewall/invariants.js";
+import { computeIntentHash } from "../firewall/validator.js";
 import { StructuredLogger } from "../logger/index.js";
 
 const logger = new StructuredLogger("LiveKeeperHubTransport");
@@ -59,6 +60,9 @@ interface PendingIntent {
   recipient: string;
   amount: bigint;
   token?: string | undefined;
+  method?: string | undefined;
+  functionArgs?: string | undefined;
+  abi?: string | undefined;
 }
 
 type BroadcastResult =
@@ -315,21 +319,69 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     return "KeeperHub Auth Error: Missing or invalid API key. Set KEEPERHUB_API_KEY with a valid 'kh_' bearer token to run live.";
   }
 
+  /**
+   * Picks execute_transfer vs execute_contract_call and builds its arguments.
+   * `method` present means this is a contract-call-shaped intent (see
+   * DryRunIntent's doc comment) — `recipient` becomes the contract address
+   * and `amount` becomes the native value sent with the call, in ether
+   * units (execute_contract_call's `value` is decimal-ether, unlike
+   * execute_transfer's `amount` which this codebase treats as 6-decimal
+   * USDC — see the existing amount-conversion limitation in LIMITATIONS.md).
+   */
+  private buildTransferOrCallRequest(
+    intent: {
+      recipient: string;
+      amount: bigint;
+      token?: string | undefined;
+      method?: string | undefined;
+      functionArgs?: string | undefined;
+      abi?: string | undefined;
+    },
+    extra: Record<string, unknown>,
+  ): { toolName: string; args: Record<string, unknown> } {
+    if (intent.method) {
+      return {
+        toolName: "execute_contract_call",
+        args: {
+          contract_address: intent.recipient,
+          chain_id: this.chainId,
+          function_name: intent.method,
+          ...(intent.functionArgs
+            ? { function_args: intent.functionArgs }
+            : {}),
+          ...(intent.abi ? { abi: intent.abi } : {}),
+          ...(intent.amount > 0n
+            ? { value: (Number(intent.amount) / 1e18).toString() }
+            : {}),
+          ...extra,
+        },
+      };
+    }
+    return {
+      toolName: "execute_transfer",
+      args: {
+        chain_id: this.chainId,
+        to_address: intent.recipient,
+        amount: (Number(intent.amount) / 1e6).toString(),
+        ...(intent.token ? { token_address: intent.token } : {}),
+        ...extra,
+      },
+    };
+  }
+
   public async dryRun(intent: DryRunIntent): Promise<DryRunResult> {
     logger.info("Executing live KeeperHub dryRun simulation", {
       context: {
         recipient: intent.recipient,
         amount: intent.amount.toString(),
+        method: intent.method,
       },
     });
 
-    const call = await this.callTool("execute_transfer", {
-      chain_id: this.chainId,
-      to_address: intent.recipient,
-      amount: (Number(intent.amount) / 1e6).toString(),
-      ...(intent.token ? { token_address: intent.token } : {}),
+    const { toolName, args } = this.buildTransferOrCallRequest(intent, {
       simulate: true,
     });
+    const call = await this.callTool(toolName, args);
 
     if (this.isAuthError(call)) {
       logger.error("KeeperHub dryRun auth failure", {
@@ -391,7 +443,10 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     let projectedDelta: bigint;
     try {
       estimatedGasUnits = BigInt(
-        call.parsed?.estimatedGasUnits || call.parsed?.gasUsed || "65000",
+        call.parsed?.estimatedGasUnits ||
+          call.parsed?.gasEstimate ||
+          call.parsed?.gasUsed ||
+          "65000",
       );
       projectedDelta = BigInt(
         call.parsed?.projectedDelta || `-${intent.amount}`,
@@ -445,13 +500,7 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     // hash-bound DryRunToken — that binding is DreamKeeper's firewall
     // primitive, layered on top of KeeperHub, so it must be synthesized
     // locally (same approach onchain-transport.ts uses).
-    const canonical = JSON.stringify({
-      recipient: intent.recipient.toLowerCase(),
-      amount: intent.amount.toString(),
-      calldata: intent.calldata?.toLowerCase() || "",
-      token: intent.token?.toLowerCase() || "",
-    });
-    const intentHash = createHash("sha256").update(canonical).digest("hex");
+    const intentHash = computeIntentHash(intent);
 
     const token: DryRunToken = {
       tokenId: `drt_${randomUUID().slice(0, 12)}`,
@@ -478,14 +527,11 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     idempotencyKey: string,
     intent: PendingIntent,
   ): Promise<BroadcastResult> {
-    const call = await this.callTool("execute_transfer", {
-      chain_id: this.chainId,
-      to_address: intent.recipient,
-      amount: (Number(intent.amount) / 1e6).toString(),
-      ...(intent.token ? { token_address: intent.token } : {}),
+    const { toolName, args } = this.buildTransferOrCallRequest(intent, {
       idempotency_key: idempotencyKey,
       simulate: false,
     });
+    const call = await this.callTool(toolName, args);
 
     if (this.isAuthError(call)) {
       logger.error("KeeperHub execute_transfer auth failure", {
@@ -583,19 +629,19 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     // Recorded *before* the network call, so that if the call itself times
     // out or drops (never yielding an execution_id), reconcile() can still
     // safely retry execute_transfer with this same idempotency_key later.
-    this.pendingIntents.set(intent.idempotencyKey, {
+    const pendingIntent: PendingIntent = {
       recipient: intent.recipient,
       amount: intent.amount,
       token: intent.token,
-    });
+      method: intent.method,
+      functionArgs: intent.functionArgs,
+      abi: intent.abi,
+    };
+    this.pendingIntents.set(intent.idempotencyKey, pendingIntent);
 
     const broadcast = await this.broadcastExecuteTransfer(
       intent.idempotencyKey,
-      {
-        recipient: intent.recipient,
-        amount: intent.amount,
-        token: intent.token,
-      },
+      pendingIntent,
     );
 
     if (!broadcast.ok) {

@@ -56,6 +56,13 @@ export interface FirewallPolicy {
 
 /**
  * Dry-run intent submitted by the agent
+ *
+ * `functionArgs` presence turns this into a contract-call-shaped intent
+ * (KeeperHub's `execute_contract_call`) instead of a plain transfer
+ * (`execute_transfer`) — `recipient` becomes the contract address, `amount`
+ * becomes the native `value` sent with the call (0n for non-payable calls),
+ * and `method` (already used for the firewall's method whitelist) doubles
+ * as the function name passed to KeeperHub.
  */
 export interface DryRunIntent {
   recipient: string;
@@ -64,6 +71,8 @@ export interface DryRunIntent {
   method?: string | undefined;
   token?: string | undefined; // ERC20 token address or "NATIVE"
   expectedInvariant?: ExpectedInvariant | undefined;
+  functionArgs?: string | undefined; // JSON array string, e.g. '["0x...", "1000"]'
+  abi?: string | undefined; // JSON ABI string; auto-fetched by KeeperHub if omitted
 }
 
 /**
@@ -102,6 +111,9 @@ export interface ExecutionIntent {
   amount: bigint;
   token?: string | undefined;
   calldata?: string | undefined;
+  method?: string | undefined;
+  functionArgs?: string | undefined;
+  abi?: string | undefined;
 }
 
 /**
@@ -170,6 +182,8 @@ export const DryRunActionSchema = z.object({
   maxBalanceLoss: z.string().optional(),
   minTokensReceived: z.string().optional(),
   maxGasUnits: z.string().optional(),
+  functionArgs: z.string().optional(),
+  abi: z.string().optional(),
 });
 
 export const ExecuteActionSchema = z.object({
@@ -187,6 +201,9 @@ export const ExecuteActionSchema = z.object({
     .regex(/^\d+$/, "Amount must be an integer string in atomic units (wei)"),
   token: z.string().optional(),
   calldata: z.string().optional(),
+  method: z.string().optional(),
+  functionArgs: z.string().optional(),
+  abi: z.string().optional(),
 });
 
 export const ReconcileActionSchema = z.object({

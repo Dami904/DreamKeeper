@@ -8,7 +8,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
   DryRunIntent,
@@ -20,6 +20,7 @@ import type {
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
 import { InvariantEvaluator } from "../firewall/invariants.js";
+import { computeIntentHash } from "../firewall/validator.js";
 import { StructuredLogger } from "../logger/index.js";
 
 const logger = new StructuredLogger("OnChainTransport");
@@ -79,7 +80,40 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
     try {
       let estimatedGasUnits = 65_000n;
 
-      if (intent.token) {
+      if (intent.method) {
+        // Generic contract-call simulation. Unlike KeeperHub's live path,
+        // this fallback has no ABI auto-fetch for verified contracts, so an
+        // explicit ABI is required.
+        if (!intent.abi) {
+          return {
+            ok: false,
+            revertReason: "ABI_REQUIRED",
+            error:
+              "The direct on-chain fallback requires an explicit ABI for contract calls (no ABI auto-fetch available outside KeeperHub).",
+          };
+        }
+        let abi: unknown;
+        let args: unknown[];
+        try {
+          abi = JSON.parse(intent.abi);
+          args = intent.functionArgs ? JSON.parse(intent.functionArgs) : [];
+        } catch {
+          return {
+            ok: false,
+            revertReason: "INVALID_ABI_OR_ARGS",
+            error: "abi and functionArgs must be valid JSON.",
+          };
+        }
+        const estimate = await this.publicClient.estimateContractGas({
+          address: intent.recipient as Address,
+          abi: abi as any,
+          functionName: intent.method,
+          args: args as any,
+          value: intent.amount,
+          account: this.account,
+        });
+        estimatedGasUnits = estimate;
+      } else if (intent.token) {
         // ERC20 simulation
         const estimate = await this.publicClient.estimateContractGas({
           address: intent.token as Address,
@@ -120,13 +154,7 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
         }
       }
 
-      const canonical = JSON.stringify({
-        recipient: intent.recipient.toLowerCase(),
-        amount: intent.amount.toString(),
-        calldata: intent.calldata?.toLowerCase() || "",
-        token: intent.token?.toLowerCase() || "",
-      });
-      const intentHash = createHash("sha256").update(canonical).digest("hex");
+      const intentHash = computeIntentHash(intent);
 
       const token: DryRunToken = {
         tokenId: `drt_${randomUUID().slice(0, 12)}`,
@@ -172,7 +200,24 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
     try {
       let txHash: Hash;
 
-      if (intent.token) {
+      if (intent.method) {
+        if (!intent.abi) {
+          throw new Error(
+            "The direct on-chain fallback requires an explicit ABI for contract calls (no ABI auto-fetch available outside KeeperHub).",
+          );
+        }
+        const abi = JSON.parse(intent.abi);
+        const args = intent.functionArgs ? JSON.parse(intent.functionArgs) : [];
+        txHash = await this.walletClient.writeContract({
+          address: intent.recipient as Address,
+          abi,
+          functionName: intent.method,
+          args,
+          value: intent.amount,
+          account: this.account,
+          chain: baseSepolia,
+        });
+      } else if (intent.token) {
         txHash = await this.walletClient.writeContract({
           address: intent.token as Address,
           abi: erc20Abi,

@@ -24,6 +24,9 @@ export function createDaydreamsActions(client: KeeperHubClient) {
     name: "keeperhub_dry_run",
     description:
       "Simulate an on-chain value transfer or contract interaction through KeeperHub without broadcasting to the chain. " +
+      "For a plain transfer, set recipient/amount (and token for ERC20). For a contract call, additionally set method " +
+      '(the function name) and functionArgs (a JSON array string of arguments, e.g. \'["0x...","1000"]\'); recipient ' +
+      'becomes the contract address and amount becomes the native value sent with the call (use "0" for non-payable calls). ' +
       "Verifies liquidity, checks spending policy against the Hallucination Firewall, and asserts invariants (max slippage, min return). " +
       "Returns a dryRunTokenId required for execution.",
     schema: DryRunActionSchema,
@@ -54,6 +57,8 @@ export function createDaydreamsActions(client: KeeperHubClient) {
         calldata: args.calldata,
         method: args.method,
         token: args.token,
+        functionArgs: args.functionArgs,
+        abi: args.abi,
         expectedInvariant,
       });
 
@@ -103,6 +108,9 @@ export function createDaydreamsActions(client: KeeperHubClient) {
         amount,
         token: args.token,
         calldata: args.calldata,
+        method: args.method,
+        functionArgs: args.functionArgs,
+        abi: args.abi,
       });
 
       if (result.state === "CONFIRMED") {
