@@ -1,5 +1,7 @@
 import type {
   AuditEntry,
+  CheckAndExecuteExecutionIntent,
+  CheckAndExecuteIntent,
   DryRunIntent,
   DryRunResult,
   ExecutionIntent,
@@ -29,4 +31,16 @@ export interface KeeperHubTransport {
    * Retrieves an immutable cryptographic audit record
    */
   getAudit(runId: string): Promise<AuditEntry | undefined>;
+
+  /**
+   * Simulates an atomic "read a value, act only if a condition holds" intent
+   */
+  checkAndExecuteDryRun(intent: CheckAndExecuteIntent): Promise<DryRunResult>;
+
+  /**
+   * Broadcasts an approved check-and-execute intent
+   */
+  checkAndExecuteExecute(
+    intent: CheckAndExecuteExecutionIntent,
+  ): Promise<ExecutionResult>;
 }

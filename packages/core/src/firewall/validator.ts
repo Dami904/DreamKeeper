@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  CheckAndExecuteIntent,
   DryRunIntent,
   DryRunToken,
   ExecutionIntent,
@@ -56,6 +57,36 @@ export function computeIntentHash(
     method: intent.method?.toLowerCase() || "",
     functionArgs: intent.functionArgs || "",
     abi: intent.abi || "",
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+/**
+ * Same purpose as computeIntentHash, for the structurally different
+ * check-and-execute intent shape (a read-only check + a condition + a write
+ * action, not a recipient/amount transfer or contract call).
+ */
+export function computeCheckAndExecuteIntentHash(
+  intent: CheckAndExecuteIntent,
+): string {
+  const canonical = JSON.stringify({
+    check: {
+      contractAddress: intent.check.contractAddress.toLowerCase(),
+      functionName: intent.check.functionName.toLowerCase(),
+      functionArgs: intent.check.functionArgs || "",
+      abi: intent.check.abi || "",
+    },
+    condition: {
+      operator: intent.condition.operator,
+      value: intent.condition.value.toLowerCase(),
+    },
+    action: {
+      contractAddress: intent.action.contractAddress.toLowerCase(),
+      functionName: intent.action.functionName.toLowerCase(),
+      functionArgs: intent.action.functionArgs || "",
+      abi: intent.action.abi || "",
+      value: (intent.action.value ?? 0n).toString(),
+    },
   });
   return createHash("sha256").update(canonical).digest("hex");
 }

@@ -41,6 +41,8 @@ export function dreamkeeperExtension(
     actionsMap.executeAction,
     actionsMap.reconcileAction,
     actionsMap.auditAction,
+    actionsMap.checkAndExecuteDryRunAction,
+    actionsMap.checkAndExecuteAction,
   ];
 
   // Make actions an array for Daydreams, while preserving named access for tests

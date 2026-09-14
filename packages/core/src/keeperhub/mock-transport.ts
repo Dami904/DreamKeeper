@@ -1,6 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type {
   AuditEntry,
+  CheckAndExecuteExecutionIntent,
+  CheckAndExecuteIntent,
   DryRunIntent,
   DryRunResult,
   DryRunToken,
@@ -10,7 +12,10 @@ import type {
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
 import { InvariantEvaluator } from "../firewall/invariants.js";
-import { computeIntentHash } from "../firewall/validator.js";
+import {
+  computeCheckAndExecuteIntentHash,
+  computeIntentHash,
+} from "../firewall/validator.js";
 
 export interface MockTransportScenario {
   forceSimulationRevert?: boolean;
@@ -106,6 +111,23 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
     intent: ExecutionIntent,
     _dryRunResult?: DryRunResult,
   ): Promise<ExecutionResult> {
+    return this.mockBroadcast(
+      intent.idempotencyKey,
+      intent.recipient,
+      intent.amount,
+    );
+  }
+
+  /**
+   * Shared happy-path/scenario-toggle broadcast logic, used by both execute()
+   * and checkAndExecuteExecute() so they exercise identical idempotency,
+   * timeout, and revert behavior.
+   */
+  private async mockBroadcast(
+    idempotencyKey: string,
+    recipient: string,
+    amount: bigint,
+  ): Promise<ExecutionResult> {
     if (this.scenario.simulateLatencyMs) {
       await new Promise((resolve) =>
         setTimeout(resolve, this.scenario.simulateLatencyMs),
@@ -113,7 +135,7 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
     }
 
     // Idempotency check: if this key was already executed, return cached result
-    const existing = this.runs.get(intent.idempotencyKey);
+    const existing = this.runs.get(idempotencyKey);
     if (existing) {
       return existing;
     }
@@ -127,23 +149,23 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
 
       const unknownResult: ExecutionResult = {
         state: "UNKNOWN",
-        idempotencyKey: intent.idempotencyKey,
+        idempotencyKey,
         runId,
         error: classified.error,
       };
 
       // Prepare resolution for later reconciliation
       const eventualTxHash = `0x${randomBytes(32).toString("hex")}`;
-      this.pendingReconciliations.set(intent.idempotencyKey, {
+      this.pendingReconciliations.set(idempotencyKey, {
         state: "CONFIRMED",
-        idempotencyKey: intent.idempotencyKey,
+        idempotencyKey,
         runId,
         txHash: eventualTxHash,
         explorerUrl: `https://sepolia.basescan.org/tx/${eventualTxHash}`,
         confirmedAt: Date.now(),
       });
 
-      this.runs.set(intent.idempotencyKey, unknownResult);
+      this.runs.set(idempotencyKey, unknownResult);
       return unknownResult;
     }
 
@@ -158,12 +180,12 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
 
       const failedResult: ExecutionResult = {
         state: "FAILED",
-        idempotencyKey: intent.idempotencyKey,
+        idempotencyKey,
         revertReason,
         error: classified.error,
       };
 
-      this.runs.set(intent.idempotencyKey, failedResult);
+      this.runs.set(idempotencyKey, failedResult);
       return failedResult;
     }
 
@@ -174,7 +196,7 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
 
     const confirmedResult: ExecutionResult = {
       state: classified.state,
-      idempotencyKey: intent.idempotencyKey,
+      idempotencyKey,
       runId,
       txHash,
       explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`,
@@ -182,14 +204,14 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
     };
 
     // Store in runs and audit log
-    this.runs.set(intent.idempotencyKey, confirmedResult);
+    this.runs.set(idempotencyKey, confirmedResult);
     this.audits.set(runId, {
       runId,
-      idempotencyKey: intent.idempotencyKey,
+      idempotencyKey,
       state: "CONFIRMED",
       timestamp: Date.now(),
-      recipient: intent.recipient,
-      amount: intent.amount.toString(),
+      recipient,
+      amount: amount.toString(),
       txHash,
       policyValidationPassed: true,
       dryRunDurationMs: 42,
@@ -197,6 +219,64 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
     });
 
     return confirmedResult;
+  }
+
+  public async checkAndExecuteDryRun(
+    intent: CheckAndExecuteIntent,
+  ): Promise<DryRunResult> {
+    if (this.scenario.simulateLatencyMs) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, this.scenario.simulateLatencyMs),
+      );
+    }
+
+    if (this.scenario.forceSimulationRevert) {
+      const reason =
+        this.scenario.simulationRevertReason || "CHECK_CONDITION_NOT_MET";
+      return {
+        ok: false,
+        revertReason: reason,
+        error: `Simulation reverted: ${reason}`,
+      };
+    }
+
+    const estimatedGasUnits = 65_000n;
+    const projectedDelta = -(intent.action.value ?? 0n);
+
+    if (intent.expectedInvariant) {
+      const evalResult = InvariantEvaluator.evaluate(intent.expectedInvariant, {
+        estimatedGasUnits,
+        actualDelta: projectedDelta,
+      });
+      if (!evalResult.passed) {
+        return {
+          ok: false,
+          revertReason: evalResult.violations.join("; "),
+          error: `Invariant check failed: ${evalResult.violations.join("; ")}`,
+        };
+      }
+    }
+
+    const intentHash = computeCheckAndExecuteIntentHash(intent);
+    const token: DryRunToken = {
+      tokenId: `drt_${randomUUID().slice(0, 12)}`,
+      intentHash,
+      issuedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      simulationTrace: { estimatedGasUnits, projectedDelta },
+    };
+
+    return { ok: true, token, estimatedGasUnits, projectedDelta };
+  }
+
+  public async checkAndExecuteExecute(
+    intent: CheckAndExecuteExecutionIntent,
+  ): Promise<ExecutionResult> {
+    return this.mockBroadcast(
+      intent.idempotencyKey,
+      intent.action.contractAddress,
+      intent.action.value ?? 0n,
+    );
   }
 
   public async reconcile(idempotencyKey: string): Promise<ExecutionResult> {

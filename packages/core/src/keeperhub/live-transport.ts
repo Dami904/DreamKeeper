@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
+  CheckAndExecuteExecutionIntent,
+  CheckAndExecuteIntent,
   DryRunIntent,
   DryRunResult,
   DryRunToken,
@@ -10,7 +12,10 @@ import type {
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { InvariantEvaluator } from "../firewall/invariants.js";
-import { computeIntentHash } from "../firewall/validator.js";
+import {
+  computeCheckAndExecuteIntentHash,
+  computeIntentHash,
+} from "../firewall/validator.js";
 import { StructuredLogger } from "../logger/index.js";
 
 const logger = new StructuredLogger("LiveKeeperHubTransport");
@@ -92,6 +97,12 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
   // guarantee makes that a status lookup, not a second broadcast — rather than
   // being permanently unable to resolve an UNKNOWN execution.
   private pendingIntents = new Map<string, PendingIntent>();
+  // Same recovery purpose as pendingIntents, for check-and-execute intents
+  // (a structurally different shape — check + condition + action).
+  private pendingCheckAndExecuteIntents = new Map<
+    string,
+    CheckAndExecuteIntent
+  >();
   // Audit trail synthesized locally: KeeperHub's MCP surface has no direct-execution
   // audit-log endpoint distinct from get_direct_execution_status.
   private audits = new Map<string, AuditEntry>();
@@ -369,6 +380,35 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     };
   }
 
+  /** Builds arguments for the real execute_check_and_execute tool. */
+  private buildCheckAndExecuteArgs(
+    intent: CheckAndExecuteIntent,
+    extra: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      contract_address: intent.check.contractAddress,
+      chain_id: this.chainId,
+      function_name: intent.check.functionName,
+      ...(intent.check.functionArgs
+        ? { function_args: intent.check.functionArgs }
+        : {}),
+      ...(intent.check.abi ? { abi: intent.check.abi } : {}),
+      condition: {
+        operator: intent.condition.operator,
+        value: intent.condition.value,
+      },
+      action: {
+        contract_address: intent.action.contractAddress,
+        function_name: intent.action.functionName,
+        ...(intent.action.functionArgs
+          ? { function_args: intent.action.functionArgs }
+          : {}),
+        ...(intent.action.abi ? { abi: intent.action.abi } : {}),
+      },
+      ...extra,
+    };
+  }
+
   public async dryRun(intent: DryRunIntent): Promise<DryRunResult> {
     logger.info("Executing live KeeperHub dryRun simulation", {
       context: {
@@ -516,6 +556,162 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       estimatedGasUnits,
       projectedDelta,
     };
+  }
+
+  public async checkAndExecuteDryRun(
+    intent: CheckAndExecuteIntent,
+  ): Promise<DryRunResult> {
+    logger.info("Executing live KeeperHub check-and-execute dry-run", {
+      context: {
+        checkContract: intent.check.contractAddress,
+        actionContract: intent.action.contractAddress,
+      },
+    });
+
+    const args = this.buildCheckAndExecuteArgs(intent, { simulate: true });
+    const call = await this.callTool("execute_check_and_execute", args);
+
+    if (this.isAuthError(call)) {
+      logger.error("KeeperHub check-and-execute dry-run auth failure");
+      return { ok: false, error: this.authErrorMessage() };
+    }
+
+    if (call.timedOut || call.error) {
+      logger.error("KeeperHub check-and-execute dry-run request failed", {
+        context: { error: call.error?.message, timedOut: call.timedOut },
+      });
+      return {
+        ok: false,
+        error: `Simulation request failed: ${call.error?.message || "Network timeout"}`,
+      };
+    }
+
+    if (call.rpcError) {
+      logger.error(
+        "KeeperHub check-and-execute dry-run rejected at the RPC layer",
+        { context: { rpcError: call.rpcError } },
+      );
+      return {
+        ok: false,
+        error: call.rpcError.message || "KeeperHub simulation request failed.",
+      };
+    }
+
+    // execute_check_and_execute's real response has no `wouldRevert` at the
+    // top level for the "condition not met" case — verified directly:
+    // {success:true, executed:false, conditionResult:{met:false, ...}} when
+    // the check fails, vs. {success:true, executed:true, wouldRevert:false,
+    // gasEstimate, conditionResult:{met:true, ...}} when it's simulated for
+    // real. `success` only means the API call itself worked, not that the
+    // condition held or the action would succeed — `executed` is the field
+    // that actually says whether the action ran/would run.
+    const apiCallOk = call.parsed?.success === true;
+
+    if (call.isToolError || !apiCallOk) {
+      logger.warn("KeeperHub check-and-execute request failed", {
+        context: { rawText: call.text },
+      });
+      return {
+        ok: false,
+        revertReason: call.parsed?.revertReason || "REQUEST_FAILED",
+        error:
+          call.parsed?.error ||
+          call.parsed?.originalError ||
+          call.text ||
+          "KeeperHub check-and-execute request failed.",
+      };
+    }
+
+    const conditionMet = call.parsed?.conditionResult?.met === true;
+    const executed = call.parsed?.executed === true;
+
+    if (!conditionMet || !executed) {
+      const observed = call.parsed?.conditionResult?.observedValue;
+      const target = call.parsed?.conditionResult?.targetValue;
+      const operator = call.parsed?.conditionResult?.operator;
+      logger.info("KeeperHub check-and-execute: condition not met", {
+        context: { observed, target, operator },
+      });
+      return {
+        ok: false,
+        revertReason: "CHECK_CONDITION_NOT_MET",
+        error: `Check returned ${observed}; condition (${operator} ${target}) not met, action would not run.`,
+      };
+    }
+
+    if (call.parsed?.wouldRevert === true) {
+      logger.warn(
+        "KeeperHub check-and-execute: condition met but action would revert",
+        { context: { revertReason: call.parsed?.revertReason } },
+      );
+      return {
+        ok: false,
+        revertReason: call.parsed?.revertReason || "SIMULATION_REVERTED",
+        error:
+          call.parsed?.error ||
+          call.parsed?.originalError ||
+          "Condition met, but the action would revert on-chain.",
+      };
+    }
+
+    let estimatedGasUnits: bigint;
+    let projectedDelta: bigint;
+    try {
+      estimatedGasUnits = BigInt(
+        call.parsed?.estimatedGasUnits ||
+          call.parsed?.gasEstimate ||
+          call.parsed?.gasUsed ||
+          "65000",
+      );
+      projectedDelta = BigInt(
+        call.parsed?.projectedDelta || `-${intent.action.value ?? 0n}`,
+      );
+    } catch (err: unknown) {
+      logger.error(
+        "KeeperHub check-and-execute dry-run returned non-integer numeric fields",
+        {
+          context: {
+            estimatedGasUnits: call.parsed?.estimatedGasUnits,
+            projectedDelta: call.parsed?.projectedDelta,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        },
+      );
+      return {
+        ok: false,
+        error:
+          "KeeperHub returned a non-integer numeric field in the simulation response.",
+      };
+    }
+
+    if (intent.expectedInvariant) {
+      const evalResult = InvariantEvaluator.evaluate(intent.expectedInvariant, {
+        estimatedGasUnits,
+        actualDelta: projectedDelta,
+      });
+      if (!evalResult.passed) {
+        logger.warn(
+          "KeeperHub check-and-execute passed simulation but failed invariant evaluation",
+          { context: { violations: evalResult.violations } },
+        );
+        return {
+          ok: false,
+          revertReason: evalResult.violations.join("; "),
+          error: `Invariant violation: ${evalResult.violations.join("; ")}`,
+        };
+      }
+    }
+
+    const intentHash = computeCheckAndExecuteIntentHash(intent);
+    const token: DryRunToken = {
+      tokenId: `drt_${randomUUID().slice(0, 12)}`,
+      intentHash,
+      issuedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      simulationTrace: { estimatedGasUnits, projectedDelta },
+    };
+
+    return { ok: true, token, estimatedGasUnits, projectedDelta };
   }
 
   /**
@@ -681,6 +877,187 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
     return result;
   }
 
+  /**
+   * Calls execute_check_and_execute for real (simulate omitted). Mirrors
+   * broadcastExecuteTransfer's error handling and execution_id extraction.
+   */
+  private async broadcastCheckAndExecute(
+    idempotencyKey: string,
+    intent: CheckAndExecuteIntent,
+  ): Promise<BroadcastResult> {
+    const args = this.buildCheckAndExecuteArgs(intent, {
+      idempotency_key: idempotencyKey,
+      simulate: false,
+    });
+    const call = await this.callTool("execute_check_and_execute", args);
+
+    if (this.isAuthError(call)) {
+      logger.error("KeeperHub check-and-execute auth failure", {
+        idempotencyKey,
+      });
+      return {
+        ok: false,
+        result: {
+          state: "FAILED",
+          idempotencyKey,
+          error: this.authErrorMessage(),
+        },
+      };
+    }
+
+    if (call.timedOut || call.error || call.rpcError) {
+      logger.error("KeeperHub check-and-execute network/RPC failure", {
+        idempotencyKey,
+        context: {
+          status: call.status,
+          error: call.error?.message,
+          rpcError: call.rpcError,
+        },
+      });
+      return {
+        ok: false,
+        result: {
+          state: "UNKNOWN",
+          idempotencyKey,
+          error:
+            call.rpcError?.message ||
+            call.error?.message ||
+            "Network timeout awaiting KeeperHub check-and-execute response.",
+        },
+      };
+    }
+
+    if (call.isToolError || call.parsed?.success === false) {
+      logger.warn("KeeperHub check-and-execute rejected the request", {
+        idempotencyKey,
+        context: {
+          revertReason: call.parsed?.revertReason,
+          rawText: call.text,
+        },
+      });
+      return {
+        ok: false,
+        result: {
+          state: "FAILED",
+          idempotencyKey,
+          revertReason: call.parsed?.revertReason || "REQUEST_FAILED",
+          error:
+            call.parsed?.error ||
+            call.parsed?.originalError ||
+            call.text ||
+            "KeeperHub check-and-execute failed.",
+        },
+      };
+    }
+
+    // Same field semantics as checkAndExecuteDryRun, verified against the
+    // real API: `success` only means the call itself worked; `executed` and
+    // `conditionResult.met` say whether the action actually ran. If the
+    // condition wasn't met at broadcast time, nothing was signed and there
+    // is no execution_id to poll — that's a FAILED result, not UNKNOWN.
+    const conditionMet = call.parsed?.conditionResult?.met === true;
+    const executed = call.parsed?.executed === true;
+
+    if (!conditionMet || !executed) {
+      const observed = call.parsed?.conditionResult?.observedValue;
+      const target = call.parsed?.conditionResult?.targetValue;
+      const operator = call.parsed?.conditionResult?.operator;
+      logger.info(
+        "KeeperHub check-and-execute: condition not met at broadcast time",
+        {
+          idempotencyKey,
+          context: { observed, target, operator },
+        },
+      );
+      return {
+        ok: false,
+        result: {
+          state: "FAILED",
+          idempotencyKey,
+          revertReason: "CHECK_CONDITION_NOT_MET",
+          error: `Check returned ${observed}; condition (${operator} ${target}) not met at broadcast time, action did not run.`,
+        },
+      };
+    }
+
+    const executionId: string | undefined =
+      call.parsed?.execution_id || call.parsed?.executionId || call.parsed?.id;
+
+    if (!executionId) {
+      logger.warn("KeeperHub check-and-execute response had no execution_id", {
+        idempotencyKey,
+        context: { rawText: call.text },
+      });
+      return {
+        ok: false,
+        result: {
+          state: "UNKNOWN",
+          idempotencyKey,
+          error:
+            "KeeperHub did not return a recognizable execution_id for this request; verify response shape once a live success sample is available.",
+        },
+      };
+    }
+
+    return { ok: true, executionId };
+  }
+
+  public async checkAndExecuteExecute(
+    intent: CheckAndExecuteExecutionIntent,
+  ): Promise<ExecutionResult> {
+    logger.info("Broadcasting live KeeperHub check-and-execute action", {
+      idempotencyKey: intent.idempotencyKey,
+      context: {
+        checkContract: intent.check.contractAddress,
+        actionContract: intent.action.contractAddress,
+      },
+    });
+
+    this.pendingCheckAndExecuteIntents.set(intent.idempotencyKey, {
+      check: intent.check,
+      condition: intent.condition,
+      action: intent.action,
+      expectedInvariant: intent.expectedInvariant,
+    });
+
+    const broadcast = await this.broadcastCheckAndExecute(
+      intent.idempotencyKey,
+      intent,
+    );
+
+    if (!broadcast.ok) {
+      return broadcast.result;
+    }
+
+    this.executionIds.set(intent.idempotencyKey, broadcast.executionId);
+
+    const polled = await this.pollExecutionStatus(broadcast.executionId);
+
+    const result: ExecutionResult = {
+      state: polled.state,
+      idempotencyKey: intent.idempotencyKey,
+      runId: broadcast.executionId,
+      txHash: polled.txHash,
+      explorerUrl: polled.explorerUrl,
+      error: polled.error,
+      revertReason: polled.revertReason,
+      confirmedAt: polled.state === "CONFIRMED" ? Date.now() : undefined,
+    };
+
+    this.audits.set(broadcast.executionId, {
+      runId: broadcast.executionId,
+      idempotencyKey: intent.idempotencyKey,
+      state: result.state,
+      timestamp: Date.now(),
+      recipient: intent.action.contractAddress,
+      amount: (intent.action.value ?? 0n).toString(),
+      txHash: result.txHash,
+      policyValidationPassed: true,
+    });
+
+    return result;
+  }
+
   private async pollExecutionStatus(executionId: string): Promise<{
     state: ExecutionResult["state"];
     txHash?: string | undefined;
@@ -766,7 +1143,10 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
 
     if (!executionId) {
       const pending = this.pendingIntents.get(idempotencyKey);
-      if (!pending) {
+      const pendingCheckAndExecute =
+        this.pendingCheckAndExecuteIntents.get(idempotencyKey);
+
+      if (!pending && !pendingCheckAndExecute) {
         return {
           state: "UNKNOWN",
           idempotencyKey,
@@ -775,19 +1155,21 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
         };
       }
 
-      // The original execute() call never got far enough to record an
-      // execution_id (network drop/timeout). Retrying execute_transfer with
-      // the same idempotency_key is safe per KeeperHub's idempotency
+      // The original execute()/checkAndExecuteExecute() call never got far
+      // enough to record an execution_id (network drop/timeout). Retrying
+      // with the same idempotency_key is safe per KeeperHub's idempotency
       // guarantee — it resolves to the existing execution rather than
-      // broadcasting a second transfer.
+      // broadcasting a second one.
       logger.warn(
-        "No execution_id on record; retrying execute_transfer with the same idempotency_key to recover it",
+        "No execution_id on record; retrying with the same idempotency_key to recover it",
         { idempotencyKey },
       );
-      const broadcast = await this.broadcastExecuteTransfer(
-        idempotencyKey,
-        pending,
-      );
+      const broadcast = pending
+        ? await this.broadcastExecuteTransfer(idempotencyKey, pending)
+        : await this.broadcastCheckAndExecute(
+            idempotencyKey,
+            pendingCheckAndExecute!,
+          );
       if (!broadcast.ok) {
         return broadcast.result;
       }

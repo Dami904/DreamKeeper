@@ -117,6 +117,46 @@ export interface ExecutionIntent {
 }
 
 /**
+ * A read call whose single scalar return value is compared against a
+ * condition before the paired action runs (KeeperHub's
+ * `execute_check_and_execute`).
+ */
+export interface CheckAndExecuteCall {
+  contractAddress: string;
+  functionName: string;
+  functionArgs?: string | undefined; // JSON array string
+  abi?: string | undefined;
+}
+
+export interface CheckAndExecuteCondition {
+  operator: "eq" | "neq" | "gt" | "lt" | "gte" | "lte";
+  value: string; // BigInt-compatible decimal or hex string
+}
+
+export interface CheckAndExecuteAction extends CheckAndExecuteCall {
+  /** Native value sent with the action call, in atomic units (0n for non-payable). */
+  value?: bigint | undefined;
+}
+
+/**
+ * Atomic "read a value, then act only if a condition holds" intent — the
+ * check is read-only and never gated by the firewall; only the action's
+ * contractAddress/functionName go through allowedRecipients/allowedMethods,
+ * matching a plain contract call's firewall treatment.
+ */
+export interface CheckAndExecuteIntent {
+  check: CheckAndExecuteCall;
+  condition: CheckAndExecuteCondition;
+  action: CheckAndExecuteAction;
+  expectedInvariant?: ExpectedInvariant | undefined;
+}
+
+export interface CheckAndExecuteExecutionIntent extends CheckAndExecuteIntent {
+  idempotencyKey: string;
+  dryRunTokenId: string;
+}
+
+/**
  * Execution result with 3-state confirmation
  */
 export interface ExecutionResult {
@@ -204,6 +244,52 @@ export const ExecuteActionSchema = z.object({
   method: z.string().optional(),
   functionArgs: z.string().optional(),
   abi: z.string().optional(),
+});
+
+const CheckAndExecuteFields = {
+  checkContractAddress: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{40}$/, "Must be a valid 20-byte Ethereum address"),
+  checkFunctionName: z.string().min(1),
+  checkFunctionArgs: z.string().optional(),
+  checkAbi: z.string().optional(),
+  operator: z.enum(["eq", "neq", "gt", "lt", "gte", "lte"]),
+  conditionValue: z
+    .string()
+    .regex(
+      /^(0x[a-fA-F0-9]+|\d+)$/,
+      "conditionValue must be a decimal or 0x-hex integer string",
+    ),
+  actionContractAddress: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{40}$/, "Must be a valid 20-byte Ethereum address"),
+  actionFunctionName: z.string().min(1),
+  actionFunctionArgs: z.string().optional(),
+  actionAbi: z.string().optional(),
+  actionValue: z
+    .string()
+    .regex(/^\d+$/, "actionValue must be an integer string in atomic units")
+    .optional(),
+  maxBalanceLoss: z.string().optional(),
+  minTokensReceived: z.string().optional(),
+  maxGasUnits: z.string().optional(),
+};
+
+export const CheckAndExecuteDryRunActionSchema = z.object(
+  CheckAndExecuteFields,
+);
+
+export const CheckAndExecuteExecuteActionSchema = z.object({
+  ...CheckAndExecuteFields,
+  idempotencyKey: z
+    .string()
+    .min(8, "Idempotency key must be at least 8 characters"),
+  dryRunTokenId: z
+    .string()
+    .min(
+      1,
+      "dryRunTokenId is required from a previous check-and-execute dry-run",
+    ),
 });
 
 export const ReconcileActionSchema = z.object({

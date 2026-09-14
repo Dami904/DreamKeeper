@@ -11,6 +11,9 @@ import { baseSepolia } from "viem/chains";
 import { randomUUID } from "node:crypto";
 import type {
   AuditEntry,
+  CheckAndExecuteCondition,
+  CheckAndExecuteExecutionIntent,
+  CheckAndExecuteIntent,
   DryRunIntent,
   DryRunResult,
   DryRunToken,
@@ -20,8 +23,32 @@ import type {
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
 import { InvariantEvaluator } from "../firewall/invariants.js";
-import { computeIntentHash } from "../firewall/validator.js";
+import {
+  computeCheckAndExecuteIntentHash,
+  computeIntentHash,
+} from "../firewall/validator.js";
 import { StructuredLogger } from "../logger/index.js";
+
+function evaluateCondition(
+  actual: bigint,
+  operator: CheckAndExecuteCondition["operator"],
+  expected: bigint,
+): boolean {
+  switch (operator) {
+    case "eq":
+      return actual === expected;
+    case "neq":
+      return actual !== expected;
+    case "gt":
+      return actual > expected;
+    case "lt":
+      return actual < expected;
+    case "gte":
+      return actual >= expected;
+    case "lte":
+      return actual <= expected;
+  }
+}
 
 const logger = new StructuredLogger("OnChainTransport");
 
@@ -336,5 +363,210 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
 
   public async getAudit(runId: string): Promise<AuditEntry | undefined> {
     return this.audits.get(runId);
+  }
+
+  public async checkAndExecuteDryRun(
+    intent: CheckAndExecuteIntent,
+  ): Promise<DryRunResult> {
+    try {
+      if (!intent.check.abi || !intent.action.abi) {
+        return {
+          ok: false,
+          revertReason: "ABI_REQUIRED",
+          error:
+            "The direct on-chain fallback requires explicit ABIs for both the check and the action (no ABI auto-fetch available outside KeeperHub).",
+        };
+      }
+
+      const checkAbi = JSON.parse(intent.check.abi);
+      const checkArgs = intent.check.functionArgs
+        ? JSON.parse(intent.check.functionArgs)
+        : [];
+      const actualRaw = await this.publicClient.readContract({
+        address: intent.check.contractAddress as Address,
+        abi: checkAbi,
+        functionName: intent.check.functionName,
+        args: checkArgs,
+      });
+      const actual = BigInt(actualRaw as any);
+      const expected = BigInt(intent.condition.value);
+
+      if (!evaluateCondition(actual, intent.condition.operator, expected)) {
+        return {
+          ok: false,
+          revertReason: "CHECK_CONDITION_NOT_MET",
+          error: `Check ${intent.check.functionName} returned ${actual}; condition (${intent.condition.operator} ${expected}) not met.`,
+        };
+      }
+
+      const actionAbi = JSON.parse(intent.action.abi);
+      const actionArgs = intent.action.functionArgs
+        ? JSON.parse(intent.action.functionArgs)
+        : [];
+      const estimatedGasUnits = await this.publicClient.estimateContractGas({
+        address: intent.action.contractAddress as Address,
+        abi: actionAbi,
+        functionName: intent.action.functionName,
+        args: actionArgs,
+        value: intent.action.value ?? 0n,
+        account: this.account,
+      });
+      const projectedDelta = -(intent.action.value ?? 0n);
+
+      if (intent.expectedInvariant) {
+        const evalResult = InvariantEvaluator.evaluate(
+          intent.expectedInvariant,
+          { estimatedGasUnits, actualDelta: projectedDelta },
+        );
+        if (!evalResult.passed) {
+          return {
+            ok: false,
+            revertReason: evalResult.violations.join("; "),
+            error: `Invariant violation: ${evalResult.violations.join("; ")}`,
+          };
+        }
+      }
+
+      const intentHash = computeCheckAndExecuteIntentHash(intent);
+      const token: DryRunToken = {
+        tokenId: `drt_${randomUUID().slice(0, 12)}`,
+        intentHash,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+        simulationTrace: { estimatedGasUnits, projectedDelta },
+      };
+
+      return { ok: true, token, estimatedGasUnits, projectedDelta };
+    } catch (err: any) {
+      logger.warn("On-chain check-and-execute dry-run failed", {
+        context: { error: err.message || String(err) },
+      });
+      return {
+        ok: false,
+        revertReason: err.shortMessage || err.message || "SIMULATION_FAILED",
+        error: err.message || "On-chain check-and-execute dry-run failed",
+      };
+    }
+  }
+
+  public async checkAndExecuteExecute(
+    intent: CheckAndExecuteExecutionIntent,
+  ): Promise<ExecutionResult> {
+    const existing = this.runs.get(intent.idempotencyKey);
+    if (existing) {
+      return existing;
+    }
+
+    const start = Date.now();
+    const runId = `kh_run_${randomUUID().slice(0, 12)}`;
+
+    try {
+      if (!intent.check.abi || !intent.action.abi) {
+        throw new Error(
+          "The direct on-chain fallback requires explicit ABIs for both the check and the action.",
+        );
+      }
+
+      // Re-read the condition immediately before acting — this sequential
+      // read-then-write, as close together as this fallback can get, is the
+      // best available substitute for KeeperHub's server-side atomicity.
+      const checkAbi = JSON.parse(intent.check.abi);
+      const checkArgs = intent.check.functionArgs
+        ? JSON.parse(intent.check.functionArgs)
+        : [];
+      const actualRaw = await this.publicClient.readContract({
+        address: intent.check.contractAddress as Address,
+        abi: checkAbi,
+        functionName: intent.check.functionName,
+        args: checkArgs,
+      });
+      const actual = BigInt(actualRaw as any);
+      const expected = BigInt(intent.condition.value);
+
+      if (!evaluateCondition(actual, intent.condition.operator, expected)) {
+        const result: ExecutionResult = {
+          state: "FAILED",
+          idempotencyKey: intent.idempotencyKey,
+          runId,
+          revertReason: "CHECK_CONDITION_NOT_MET",
+          error: `Check ${intent.check.functionName} returned ${actual}; condition no longer met at execution time.`,
+        };
+        this.runs.set(intent.idempotencyKey, result);
+        return result;
+      }
+
+      const actionAbi = JSON.parse(intent.action.abi);
+      const actionArgs = intent.action.functionArgs
+        ? JSON.parse(intent.action.functionArgs)
+        : [];
+      const txHash = await this.walletClient.writeContract({
+        address: intent.action.contractAddress as Address,
+        abi: actionAbi,
+        functionName: intent.action.functionName,
+        args: actionArgs,
+        value: intent.action.value ?? 0n,
+        account: this.account,
+        chain: baseSepolia,
+      });
+
+      logger.info("Broadcasted check-and-execute action to Base Sepolia", {
+        context: { txHash, runId },
+      });
+
+      const receipt = await this.publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        confirmations: 1,
+      });
+
+      const confirmed = receipt.status === "success";
+      const classified = ExecutionStateMachine.classifyResponse({
+        txHash: confirmed ? txHash : undefined,
+        revertReason: !confirmed ? "TRANSACTION_REVERTED_ON_CHAIN" : undefined,
+      });
+
+      const result: ExecutionResult = {
+        state: classified.state,
+        idempotencyKey: intent.idempotencyKey,
+        runId,
+        txHash,
+        explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`,
+        confirmedAt: confirmed ? Date.now() : undefined,
+        revertReason: !confirmed ? "TRANSACTION_REVERTED_ON_CHAIN" : undefined,
+      };
+
+      this.runs.set(intent.idempotencyKey, result);
+      this.audits.set(runId, {
+        runId,
+        idempotencyKey: intent.idempotencyKey,
+        state: classified.state,
+        timestamp: Date.now(),
+        recipient: intent.action.contractAddress,
+        amount: (intent.action.value ?? 0n).toString(),
+        txHash,
+        policyValidationPassed: true,
+        dryRunDurationMs: 45,
+        executionDurationMs: Date.now() - start,
+      });
+
+      return result;
+    } catch (err: any) {
+      logger.error("Failed to execute on-chain check-and-execute action", {
+        context: { error: err.message || String(err) },
+      });
+
+      const classified = ExecutionStateMachine.classifyResponse({
+        revertReason: err.shortMessage || err.message,
+      });
+
+      const result: ExecutionResult = {
+        state: classified.state,
+        idempotencyKey: intent.idempotencyKey,
+        runId,
+        error: err.message || "Failed to execute check-and-execute action",
+      };
+
+      this.runs.set(intent.idempotencyKey, result);
+      return result;
+    }
   }
 }
