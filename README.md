@@ -139,12 +139,28 @@ DreamKeeper doesn't wrap a single KeeperHub call — every write path an agent c
 
 `execute_protocol_action`, `tempo_sign_and_hold`, and `get_spending_limits` have no dry-run/simulate step — the first two broadcast (or sign) immediately once approved by the firewall, and the last is a plain read. Every Tempo tool call is gated by its own default-deny whitelists (`allowedTempoNetworks`, `allowedTempoTokens`) and per-hold/rolling-24h decimal caps, independent of the EVM-side `FirewallPolicy` fields — see [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md#threat-6-hallucinated-or-adversarial-tempo-paymentid) for how `keeperhub_tempo_release_hold`/`keeperhub_tempo_cancel_hold` guard against a hallucinated `paymentId`.
 
-**Real verified transactions** (not mock output — independently checked via `eth_getTransactionReceipt` against each chain's own RPC, not just the tool's own printout):
+### Verified transaction ledger
 
-- Aave V3 `supply` on Base Sepolia via `execute_protocol_action`: [`0x3171a1724c0574d9946fe2a4d79cd547da6b1e8c239a09fa9e754cb947620b59`](https://sepolia.basescan.org/tx/0x3171a1724c0574d9946fe2a4d79cd547da6b1e8c239a09fa9e754cb947620b59)
-- Tempo hold release via `tempo_release_hold` on Tempo Testnet: [`0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190`](https://explore.testnet.tempo.xyz/tx/0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190)
+Every row below is a real broadcast, independently confirmed by querying the chain's own RPC directly — not the tool's own success printout — so these are recomputable, not taken on trust.
 
-See [`docs/API_NOTES.md`](docs/API_NOTES.md) for the full request/response detail behind each.
+| Endpoint                                     | Chain         | Tx hash                                                                                                                           | Confirmed                                                               |
+| -------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `execute_contract_call` → `approve`          | Base Sepolia  | [`0xad3cddf9...9c7ca64`](https://sepolia.basescan.org/tx/0xad3cddf93a30e6a7a9406cb5cc7c39780c7c103baa1652f3282a5e3319c7ca64)      | ✅ `status: 0x1`                                                        |
+| `execute_protocol_action` → `aave-v3/supply` | Base Sepolia  | [`0x3171a172...620b59`](https://sepolia.basescan.org/tx/0x3171a1724c0574d9946fe2a4d79cd547da6b1e8c239a09fa9e754cb947620b59)       | ✅ `status: 0x1`, 7 logs (transfer + aToken mint + Aave `Supply` event) |
+| `tempo_release_hold`                         | Tempo Testnet | [`0xc17284a1...c2bb190`](https://explore.testnet.tempo.xyz/tx/0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190) | ✅ `status: 0x1`, real ERC-20 `Transfer` event                          |
+
+Check any row yourself — this is the exact command used to verify the Aave supply above, no API key or wallet required:
+
+```bash
+curl -s https://sepolia.base.org \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionReceipt",
+       "params":["0x3171a1724c0574d9946fe2a4d79cd547da6b1e8c239a09fa9e754cb947620b59"]}' \
+  | grep -o '"status":"[^"]*"'
+# "status":"0x1"  ->  the transaction succeeded on-chain
+```
+
+See [`docs/API_NOTES.md`](docs/API_NOTES.md) for the full request/response payloads behind each row, plus real findings caught by testing against the live API rather than assuming its documented schema — a field-name bug (`gasEstimate` vs. an assumed name), a response-shape bug (`execute_check_and_execute`'s `executed`/`conditionResult` fields, not `wouldRevert`), and a misclassification bug this session's own live testing caught and fixed (a synchronous read-type protocol action was returning `UNKNOWN` instead of `CONFIRMED`).
 
 ---
 
@@ -342,7 +358,7 @@ _Note on test integrity: All 76 tests run against the deterministic `MockKeeperH
 - **KeeperHub**: Deterministic Web3 automation, Turnkey signer enclaves, smart gas estimation, and private routing ([keeperhub.com](https://keeperhub.com)).
 - **Daydreams**: The open-source generative agent framework ([github.com/daydreamsai/daydreams](https://github.com/daydreamsai/daydreams), MIT License).
 - **fast-check**: Property-based testing framework ([github.com/dubzzz/fast-check](https://github.com/dubzzz/fast-check), MIT License).
-- **Built with Antigravity**: Developed using Google DeepMind's Antigravity pairing environment.
+- **Built with Claude Code**: Developed with Anthropic's Claude Code, including the live KeeperHub API verification work documented throughout this README and `docs/`.
 
 ---
 
