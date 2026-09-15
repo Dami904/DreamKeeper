@@ -47,6 +47,44 @@ describe("Protocol Action Support (execute_protocol_action)", () => {
     });
   });
 
+  describe("FirewallValidator: params.network cross-check against policy.network", () => {
+    const policy: FirewallPolicy = {
+      network: "base-sepolia", // chain id 84532
+      maxAmountPerTx: 1_000_000n,
+      maxCumulativeDailySpend: 10_000_000n,
+      allowedRecipients: [],
+      requireSimulationSuccess: true,
+      allowedProtocolActions: [approvedAction],
+    };
+
+    it("blocks an approved actionType whose params.network targets a different chain", () => {
+      const validator = new FirewallValidator(policy);
+      const result = validator.validateProtocolAction(approvedAction, {
+        network: "1", // ethereum-mainnet, not base-sepolia
+      });
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toBe("PROTOCOL_ACTION_NETWORK_MISMATCH");
+      }
+    });
+
+    it("permits an approved actionType whose params.network matches the policy network", () => {
+      const validator = new FirewallValidator(policy);
+      const result = validator.validateProtocolAction(approvedAction, {
+        network: "84532",
+      });
+      expect(result.valid).toBe(true);
+    });
+
+    it("does not block when params.network is absent (left to KeeperHub to reject)", () => {
+      const validator = new FirewallValidator(policy);
+      const result = validator.validateProtocolAction(approvedAction, {
+        amount: "1000000",
+      });
+      expect(result.valid).toBe(true);
+    });
+  });
+
   describe("MockKeeperHubTransport + KeeperHubClient: end-to-end via the real action handler", () => {
     const policy: FirewallPolicy = {
       network: "base-sepolia",

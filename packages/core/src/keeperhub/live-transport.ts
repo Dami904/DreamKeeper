@@ -15,6 +15,7 @@ import type {
   TempoHoldIntent,
   TempoHoldResult,
 } from "../types/index.js";
+import { SUPPORTED_NETWORK_CHAIN_IDS as CHAIN_IDS } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { InvariantEvaluator } from "../firewall/invariants.js";
 import {
@@ -24,16 +25,6 @@ import {
 import { StructuredLogger } from "../logger/index.js";
 
 const logger = new StructuredLogger("LiveKeeperHubTransport");
-
-// KeeperHub MCP `chain_id` values, keyed by DreamKeeper's SupportedNetwork policy setting.
-const CHAIN_IDS: Record<SupportedNetwork, string> = {
-  "ethereum-mainnet": "1",
-  "base-mainnet": "8453",
-  "base-sepolia": "84532",
-  "ethereum-sepolia": "11155111",
-  "arbitrum-one": "42161",
-  "arbitrum-sepolia": "421614",
-};
 
 // Direct-execution status values per KeeperHub's get_direct_execution_status tool.
 // Only "completed" and "failed" are terminal; everything else must keep being polled.

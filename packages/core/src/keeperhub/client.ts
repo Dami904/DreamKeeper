@@ -26,11 +26,54 @@ import { CircuitBreaker } from "../firewall/circuit-breaker.js";
 import {
   type IdempotencyStore,
   MemoryIdempotencyStore,
+  FileIdempotencyStore,
   generateSemanticIdempotencyKey,
 } from "./idempotency.js";
+import { readJsonFile, writeJsonFile } from "../persistence/file-store.js";
 import { StructuredLogger } from "../logger/index.js";
+import { join } from "node:path";
 
 const logger = new StructuredLogger("KeeperHubClient");
+
+const CIRCUIT_BREAKER_PERSISTED_METHODS = new Set([
+  "recordSuccess",
+  "recordFailure",
+  "recordUnknown",
+  "reset",
+  "forceOpen",
+]);
+
+/**
+ * Wraps a CircuitBreaker so every state-changing call also persists a fresh
+ * snapshot to disk — keeps CircuitBreaker itself free of filesystem
+ * concerns (see CircuitBreakerSnapshot's doc comment) while still surviving
+ * a process restart when the client was constructed with `persistDir`.
+ */
+function withFilePersistence(
+  breaker: CircuitBreaker,
+  filePath: string,
+): CircuitBreaker {
+  return new Proxy(breaker, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (
+        typeof value === "function" &&
+        typeof prop === "string" &&
+        CIRCUIT_BREAKER_PERSISTED_METHODS.has(prop)
+      ) {
+        return (...args: unknown[]) => {
+          const result = (value as (...a: unknown[]) => unknown).apply(
+            target,
+            args,
+          );
+          writeJsonFile(filePath, target.getSnapshot());
+          return result;
+        };
+      }
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
 
 export class KeeperHubClient {
   private config: KeeperHubConfig;
@@ -47,8 +90,15 @@ export class KeeperHubClient {
   // paymentId that happens to belong to a real org-owned hold.
   private activeTempoHolds = new Map<
     string,
-    { recipient: string; amount: number; network: string; tokenAddress: string }
+    { recipient: string; amount: string; network: string; tokenAddress: string }
   >();
+
+  // Set only when constructed with `persistDir` — the circuit breaker and
+  // activeTempoHolds have no persistence abstraction of their own (unlike
+  // idempotency, which has a real IdempotencyStore interface), so this
+  // client writes their state to disk itself after every mutating call.
+  private tempoHoldsFilePath: string | undefined;
+  private circuitBreakerFilePath: string | undefined;
 
   constructor(
     config: KeeperHubConfig,
@@ -56,13 +106,65 @@ export class KeeperHubClient {
       transport?: KeeperHubTransport;
       idempotencyStore?: IdempotencyStore;
       circuitBreaker?: CircuitBreaker;
+      /**
+       * Opt-in file-backed persistence directory. When set, the idempotency
+       * store, circuit breaker state, and active Tempo hold tracking all
+       * survive a process restart via plain JSON files in this directory.
+       * Unset (default): everything stays in-memory only, byte-identical to
+       * prior behavior.
+       */
+      persistDir?: string;
     },
   ) {
     this.config = config;
     this.firewall = new FirewallValidator(config.policy);
-    this.idempotencyStore =
-      dependencies?.idempotencyStore ?? new MemoryIdempotencyStore();
+
+    if (dependencies?.idempotencyStore) {
+      this.idempotencyStore = dependencies.idempotencyStore;
+    } else if (dependencies?.persistDir) {
+      this.idempotencyStore = new FileIdempotencyStore(
+        join(dependencies.persistDir, "idempotency.json"),
+      );
+    } else {
+      this.idempotencyStore = new MemoryIdempotencyStore();
+    }
+
     this.circuitBreaker = dependencies?.circuitBreaker ?? new CircuitBreaker();
+    if (dependencies?.persistDir) {
+      this.circuitBreakerFilePath = join(
+        dependencies.persistDir,
+        "circuit-breaker.json",
+      );
+      const snapshot = readJsonFile<
+        ReturnType<CircuitBreaker["getSnapshot"]> | undefined
+      >(this.circuitBreakerFilePath, undefined);
+      if (snapshot) {
+        this.circuitBreaker.restoreSnapshot(snapshot);
+      }
+      this.circuitBreaker = withFilePersistence(
+        this.circuitBreaker,
+        this.circuitBreakerFilePath,
+      );
+
+      this.tempoHoldsFilePath = join(
+        dependencies.persistDir,
+        "tempo-holds.json",
+      );
+      const holds = readJsonFile<
+        Array<
+          [
+            string,
+            {
+              recipient: string;
+              amount: string;
+              network: string;
+              tokenAddress: string;
+            },
+          ]
+        >
+      >(this.tempoHoldsFilePath, []);
+      this.activeTempoHolds = new Map(holds);
+    }
 
     if (dependencies?.transport) {
       this.transport = dependencies.transport;
@@ -77,6 +179,7 @@ export class KeeperHubClient {
         this.transport = new OnChainKeeperHubTransport({
           privateKey: config.privateKey as `0x${string}`,
           rpcUrl: config.rpcUrl,
+          maxGasPriceGwei: config.policy.maxGasPriceGwei,
         });
       } else {
         throw new Error(
@@ -291,7 +394,10 @@ export class KeeperHubClient {
       return existing.result;
     }
 
-    const validation = this.firewall.validateProtocolAction(intent.actionType);
+    const validation = this.firewall.validateProtocolAction(
+      intent.actionType,
+      intent.params,
+    );
     if (!validation.valid) {
       return {
         state: "FAILED",
@@ -382,10 +488,11 @@ export class KeeperHubClient {
     if (result.paymentId) {
       this.activeTempoHolds.set(result.paymentId, {
         recipient: intent.recipient,
-        amount: Number.parseFloat(intent.amount),
+        amount: intent.amount,
         network: intent.network,
         tokenAddress: intent.tokenAddress,
       });
+      this.persistTempoHolds();
     }
 
     return result;
@@ -456,6 +563,7 @@ export class KeeperHubClient {
       this.circuitBreaker.recordSuccess();
       this.firewall.recordTempoSpend(tracked.amount);
       this.activeTempoHolds.delete(paymentId);
+      this.persistTempoHolds();
     } else if (result.state === "FAILED") {
       this.circuitBreaker.recordFailure(result.revertReason || result.error);
     } else if (result.state === "UNKNOWN") {
@@ -487,9 +595,19 @@ export class KeeperHubClient {
     const result = await this.transport.tempoCancelHold(paymentId);
     if (result.ok) {
       this.activeTempoHolds.delete(paymentId);
+      this.persistTempoHolds();
     }
 
     return result;
+  }
+
+  private persistTempoHolds(): void {
+    if (!this.tempoHoldsFilePath) {
+      return;
+    }
+    writeJsonFile(this.tempoHoldsFilePath, [
+      ...this.activeTempoHolds.entries(),
+    ]);
   }
 
   /**

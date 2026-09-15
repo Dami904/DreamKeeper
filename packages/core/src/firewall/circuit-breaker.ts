@@ -9,6 +9,17 @@ export interface CircuitBreakerConfig {
   cooldownMs?: number; // Default 15 minutes (900,000 ms)
 }
 
+/** Plain-data snapshot of a CircuitBreaker's internal state, for opt-in
+ * external persistence (see KeeperHubClientOptions.persistDir) — the class
+ * itself stays free of any filesystem concerns; a caller loads a snapshot at
+ * construction and saves one after each state-changing call. */
+export interface CircuitBreakerSnapshot {
+  state: CircuitState;
+  consecutiveFailures: number;
+  consecutiveUnknowns: number;
+  lastTrippedAt: number;
+}
+
 export class CircuitBreaker {
   private state: CircuitState = "CLOSED";
   private consecutiveFailures = 0;
@@ -116,5 +127,21 @@ export class CircuitBreaker {
 
   public forceOpen(): void {
     this.trip("Manually forced open by operator/policy");
+  }
+
+  public getSnapshot(): CircuitBreakerSnapshot {
+    return {
+      state: this.state,
+      consecutiveFailures: this.consecutiveFailures,
+      consecutiveUnknowns: this.consecutiveUnknowns,
+      lastTrippedAt: this.lastTrippedAt,
+    };
+  }
+
+  public restoreSnapshot(snapshot: CircuitBreakerSnapshot): void {
+    this.state = snapshot.state;
+    this.consecutiveFailures = snapshot.consecutiveFailures;
+    this.consecutiveUnknowns = snapshot.consecutiveUnknowns;
+    this.lastTrippedAt = snapshot.lastTrippedAt;
   }
 }

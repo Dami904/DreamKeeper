@@ -61,6 +61,25 @@ export interface OnChainTransportOptions {
   privateKey: `0x${string}`;
   rpcUrl?: string | undefined;
   timeoutMs?: number | undefined;
+  /** See FirewallPolicy.maxGasPriceGwei — undefined means no ceiling. */
+  maxGasPriceGwei?: number | undefined;
+}
+
+/**
+ * Pure comparison, exported for direct unit testing: does the current
+ * network gas price exceed the configured ceiling? An unset ceiling never
+ * blocks (matches every other optional FirewallPolicy cap in this codebase
+ * that defaults to "not enforced" rather than "zero allowed").
+ */
+export function exceedsGasCeiling(
+  currentGasPriceWei: bigint,
+  maxGasPriceGwei: number | undefined,
+): boolean {
+  if (maxGasPriceGwei === undefined) {
+    return false;
+  }
+  const ceilingWei = BigInt(Math.round(maxGasPriceGwei * 1e9));
+  return currentGasPriceWei > ceilingWei;
 }
 
 function createClients(options: OnChainTransportOptions) {
@@ -90,12 +109,14 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
   private account: Clients["account"];
   private runs = new Map<string, ExecutionResult>();
   private audits = new Map<string, AuditEntry>();
+  private maxGasPriceGwei: number | undefined;
 
   constructor(options: OnChainTransportOptions) {
     const clients = createClients(options);
     this.account = clients.account;
     this.publicClient = clients.publicClient;
     this.walletClient = clients.walletClient;
+    this.maxGasPriceGwei = options.maxGasPriceGwei;
 
     const rpcUrl = options.rpcUrl || "https://sepolia.base.org";
 
@@ -167,6 +188,26 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
       }
 
       const projectedDelta = -intent.amount;
+
+      // Gas-price ceiling — live network state, not part of the intent, so
+      // it's checked here at the transport level (same category as the
+      // invariant evaluation below) rather than in FirewallValidator.
+      if (this.maxGasPriceGwei !== undefined) {
+        const currentGasPriceWei = await this.publicClient.getGasPrice();
+        if (exceedsGasCeiling(currentGasPriceWei, this.maxGasPriceGwei)) {
+          logger.warn("On-chain dry-run blocked: gas price exceeds ceiling", {
+            context: {
+              currentGasPriceWei: currentGasPriceWei.toString(),
+              maxGasPriceGwei: this.maxGasPriceGwei,
+            },
+          });
+          return {
+            ok: false,
+            revertReason: "GAS_PRICE_EXCEEDS_CEILING",
+            error: `Current network gas price (${currentGasPriceWei.toString()} wei) exceeds the configured ceiling (${this.maxGasPriceGwei} gwei).`,
+          };
+        }
+      }
 
       // Invariant evaluation
       if (intent.expectedInvariant) {

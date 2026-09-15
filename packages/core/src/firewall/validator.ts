@@ -7,6 +7,7 @@ import type {
   FirewallPolicy,
   TempoHoldIntent,
 } from "../types/index.js";
+import { SUPPORTED_NETWORK_CHAIN_IDS } from "../types/index.js";
 import { StructuredLogger } from "../logger/index.js";
 
 const logger = new StructuredLogger("FirewallValidator");
@@ -26,6 +27,7 @@ export interface ValidationFailure {
     | "DRY_RUN_TOKEN_EXPIRED"
     | "DRY_RUN_INTENT_MISMATCH"
     | "PROTOCOL_ACTION_NOT_ALLOWED"
+    | "PROTOCOL_ACTION_NETWORK_MISMATCH"
     | "TEMPO_NETWORK_NOT_ALLOWED"
     | "TEMPO_TOKEN_NOT_ALLOWED"
     | "TEMPO_AMOUNT_EXCEEDS_HOLD_CAP"
@@ -43,8 +45,38 @@ interface DailySpendEntry {
 }
 
 interface TempoDailySpendEntry {
-  amount: number;
+  amount: bigint;
   timestamp: number;
+}
+
+/** Fixed decimal precision used for internal Tempo cap bookkeeping — this is
+ * cap-enforcement precision, not the token's actual on-chain decimals, which
+ * KeeperHub handles separately. */
+const TEMPO_AMOUNT_DECIMALS = 6;
+
+/**
+ * Converts a human-readable Tempo decimal amount string (e.g. "1.50") into a
+ * bigint scaled to TEMPO_AMOUNT_DECIMALS, without ever going through
+ * Number.parseFloat — repeated float addition on a rolling spend history
+ * (this.tempoSpendHistory) risks precision drift that a single parseFloat
+ * comparison wouldn't show.
+ */
+export function parseTempoAmountMicros(amount: string): bigint {
+  const negative = amount.startsWith("-");
+  const unsigned = negative ? amount.slice(1) : amount;
+  const [wholePart, fractionalPart = ""] = unsigned.split(".");
+  const paddedFraction = (
+    fractionalPart + "0".repeat(TEMPO_AMOUNT_DECIMALS)
+  ).slice(0, TEMPO_AMOUNT_DECIMALS);
+  const digits = `${wholePart || "0"}${paddedFraction}`;
+  const value = BigInt(digits);
+  return negative ? -value : value;
+}
+
+/** Converts a static config cap (a plain JS number) to the same micro-unit
+ * scale used for parsed Tempo amounts, for comparison purposes only. */
+function tempoCapToMicros(cap: number): bigint {
+  return BigInt(Math.round(cap * 10 ** TEMPO_AMOUNT_DECIMALS));
 }
 
 /**
@@ -301,8 +333,17 @@ export class FirewallValidator {
    * no other safety net catching a bad call before it signs and broadcasts.
    * An empty/unset allowedProtocolActions means "no protocol actions
    * approved yet", not "all protocol actions approved".
+   *
+   * Also soft-checks `params.network` against the configured policy network
+   * when present: only `actionType` is whitelisted otherwise, so an approved
+   * action carrying an unexpected chain id in its params would previously
+   * pass through unchecked. This only blocks an explicit mismatch — a
+   * missing/unrecognized network is left to KeeperHub itself to reject.
    */
-  public validateProtocolAction(actionType: string): ValidationResult {
+  public validateProtocolAction(
+    actionType: string,
+    params?: Record<string, unknown>,
+  ): ValidationResult {
     const allowed = this.policy.allowedProtocolActions ?? [];
     if (!allowed.includes(actionType)) {
       logger.warn(
@@ -316,6 +357,32 @@ export class FirewallValidator {
         details: { actionType },
       };
     }
+
+    const paramsNetwork = params?.["network"];
+    const expectedChainId = SUPPORTED_NETWORK_CHAIN_IDS[this.policy.network];
+    if (
+      typeof paramsNetwork === "string" &&
+      paramsNetwork !== expectedChainId
+    ) {
+      logger.warn(
+        "Firewall blocked protocol action: params.network does not match policy network",
+        {
+          context: {
+            actionType,
+            paramsNetwork,
+            policyNetwork: this.policy.network,
+            expectedChainId,
+          },
+        },
+      );
+      return {
+        valid: false,
+        reason: "PROTOCOL_ACTION_NETWORK_MISMATCH",
+        message: `Protocol action '${actionType}' targets network '${paramsNetwork}', but the firewall policy is configured for '${this.policy.network}' (chain id ${expectedChainId}).`,
+        details: { actionType, paramsNetwork, expectedChainId },
+      };
+    }
+
     return { valid: true };
   }
 
@@ -373,11 +440,13 @@ export class FirewallValidator {
       };
     }
 
-    const amount = Number.parseFloat(intent.amount);
+    const amountMicros = parseTempoAmountMicros(intent.amount);
     const maxPerHold = this.policy.maxTempoAmountPerHold;
-    if (maxPerHold === undefined || amount > maxPerHold) {
+    const maxPerHoldMicros =
+      maxPerHold === undefined ? undefined : tempoCapToMicros(maxPerHold);
+    if (maxPerHoldMicros === undefined || amountMicros > maxPerHoldMicros) {
       logger.warn("Firewall blocked Tempo hold: amount exceeds per-hold cap", {
-        context: { requestedAmount: amount, maxAllowed: maxPerHold },
+        context: { requestedAmount: intent.amount, maxAllowed: maxPerHold },
       });
       return {
         valid: false,
@@ -385,20 +454,25 @@ export class FirewallValidator {
         message:
           maxPerHold === undefined
             ? "No maxTempoAmountPerHold is configured, so no Tempo hold is approved."
-            : `Hold amount ${amount} exceeds maximum allowed per hold (${maxPerHold}).`,
-        details: { requested: amount, max: maxPerHold },
+            : `Hold amount ${intent.amount} exceeds maximum allowed per hold (${maxPerHold}).`,
+        details: { requested: intent.amount, max: maxPerHold },
       };
     }
 
-    const currentTempo24hSpend = this.getRollingTempo24hSpend();
+    const currentTempo24hSpendMicros = this.getRollingTempo24hSpend();
     const maxDaily = this.policy.maxTempoCumulativeDailySpend;
-    if (maxDaily === undefined || currentTempo24hSpend + amount > maxDaily) {
+    const maxDailyMicros =
+      maxDaily === undefined ? undefined : tempoCapToMicros(maxDaily);
+    if (
+      maxDailyMicros === undefined ||
+      currentTempo24hSpendMicros + amountMicros > maxDailyMicros
+    ) {
       logger.warn(
         "Firewall blocked Tempo hold: exceeds 24h daily velocity limit",
         {
           context: {
-            current24hSpend: currentTempo24hSpend,
-            requested: amount,
+            current24hSpend: currentTempo24hSpendMicros.toString(),
+            requested: intent.amount,
             dailyLimit: maxDaily,
           },
         },
@@ -409,8 +483,11 @@ export class FirewallValidator {
         message:
           maxDaily === undefined
             ? "No maxTempoCumulativeDailySpend is configured, so no Tempo hold is approved."
-            : `Hold would cause 24h Tempo spend (${currentTempo24hSpend + amount}) to exceed daily limit (${maxDaily}).`,
-        details: { currentSpend: currentTempo24hSpend, limit: maxDaily },
+            : `Hold would cause 24h Tempo spend to exceed daily limit (${maxDaily}).`,
+        details: {
+          currentSpendMicros: currentTempo24hSpendMicros.toString(),
+          limit: maxDaily,
+        },
       };
     }
 
@@ -422,21 +499,26 @@ export class FirewallValidator {
    * released/broadcast, mirroring recordSpend()'s CONFIRMED-only timing).
    */
   public recordTempoSpend(
-    amount: number,
+    amount: string,
     timestamp: number = Date.now(),
   ): void {
-    this.tempoSpendHistory.push({ amount, timestamp });
+    this.tempoSpendHistory.push({
+      amount: parseTempoAmountMicros(amount),
+      timestamp,
+    });
     this.pruneOldTempoSpend();
   }
 
   /**
-   * Calculates total Tempo spend within the past 24 hours
+   * Calculates total Tempo spend within the past 24 hours, in micro-units
+   * (see parseTempoAmountMicros) — bigint summation avoids the float
+   * accumulation drift a Number-based reduce would risk over many entries.
    */
-  public getRollingTempo24hSpend(now: number = Date.now()): number {
+  public getRollingTempo24hSpend(now: number = Date.now()): bigint {
     const cutoff = now - 24 * 60 * 60 * 1000;
     return this.tempoSpendHistory
       .filter((entry) => entry.timestamp >= cutoff)
-      .reduce((sum, entry) => sum + entry.amount, 0);
+      .reduce((sum, entry) => sum + entry.amount, 0n);
   }
 
   private pruneOldTempoSpend(now: number = Date.now()): void {

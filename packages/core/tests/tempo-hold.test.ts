@@ -93,7 +93,7 @@ describe("Tempo Hold/Release/Cancel Support (tempo_sign_and_hold / tempo_release
         }),
       );
       expect(validator.validateTempoHold(baseIntent).valid).toBe(true);
-      validator.recordTempoSpend(1);
+      validator.recordTempoSpend("1");
       const result = validator.validateTempoHold(baseIntent);
       expect(result.valid).toBe(false);
       if (!result.valid)
@@ -103,6 +103,38 @@ describe("Tempo Hold/Release/Cancel Support (tempo_sign_and_hold / tempo_release
     it("permits a fully-whitelisted, in-cap hold", () => {
       const validator = new FirewallValidator(basePolicy());
       expect(validator.validateTempoHold(baseIntent).valid).toBe(true);
+    });
+
+    it("sums repeated fractional spends via bigint, not float accumulation", () => {
+      // 10 x "0.1" is the classic float-drift case: Number additions of 0.1
+      // do not land exactly on 1 (0.1 + 0.1 + ... !== 1 in IEEE-754). A
+      // parseFloat-based rolling sum could therefore trip the cap either one
+      // step early or one step late depending on which way the drift falls.
+      const validator = new FirewallValidator(
+        basePolicy({
+          maxTempoAmountPerHold: 1,
+          maxTempoCumulativeDailySpend: 1,
+        }),
+      );
+      for (let i = 0; i < 9; i++) {
+        expect(
+          validator.validateTempoHold({ ...baseIntent, amount: "0.1" }).valid,
+        ).toBe(true);
+        validator.recordTempoSpend("0.1");
+      }
+      // 9 x 0.1 = 0.9 spent; one more 0.1 hold reaches exactly the 1.0 cap.
+      expect(
+        validator.validateTempoHold({ ...baseIntent, amount: "0.1" }).valid,
+      ).toBe(true);
+      validator.recordTempoSpend("0.1");
+      // Total is now exactly 1.0 (the cap) — any further hold must be blocked.
+      const result = validator.validateTempoHold({
+        ...baseIntent,
+        amount: "0.01",
+      });
+      expect(result.valid).toBe(false);
+      if (!result.valid)
+        expect(result.reason).toBe("TEMPO_AMOUNT_EXCEEDS_DAILY_LIMIT");
     });
   });
 

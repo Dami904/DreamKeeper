@@ -12,6 +12,21 @@ export type SupportedNetwork =
   | "arbitrum-sepolia";
 
 /**
+ * KeeperHub MCP `chain_id` values, keyed by DreamKeeper's SupportedNetwork
+ * policy setting. Single source of truth shared by LiveKeeperHubTransport
+ * (building chain_id for its own calls) and FirewallValidator (cross-checking
+ * a protocol action's params.network against the configured policy network).
+ */
+export const SUPPORTED_NETWORK_CHAIN_IDS: Record<SupportedNetwork, string> = {
+  "ethereum-mainnet": "1",
+  "base-mainnet": "8453",
+  "base-sepolia": "84532",
+  "ethereum-sepolia": "11155111",
+  "arbitrum-one": "42161",
+  "arbitrum-sepolia": "421614",
+};
+
+/**
  * Strict 3-state lifecycle for financial operations
  */
 export type ExecutionState = "CONFIRMED" | "FAILED" | "UNKNOWN";
@@ -31,8 +46,6 @@ export interface ExpectedInvariant {
   minTokensReceived?: bigint | undefined;
   /** Maximum acceptable gas units */
   maxGasUnits?: bigint | undefined;
-  /** Maximum allowable price slippage in basis points (e.g. 50 = 0.5%) */
-  maxSlippageBps?: number | undefined;
 }
 
 /**
@@ -83,6 +96,15 @@ export interface FirewallPolicy {
    * not atomic bigint units of a single EVM policy token.
    */
   maxTempoCumulativeDailySpend?: number | undefined;
+  /**
+   * Maximum acceptable network gas price, in gwei, before a dry-run refuses
+   * to issue an execution token. Enforced only on the direct-signer fallback
+   * (`OnChainKeeperHubTransport`), where DreamKeeper reads gas price directly
+   * off the RPC before broadcasting — the live KeeperHub execution path
+   * reprices gas server-side before this code ever observes it, so this
+   * field has no effect there. Undefined means no ceiling is enforced.
+   */
+  maxGasPriceGwei?: number | undefined;
 }
 
 /**
