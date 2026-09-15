@@ -97,6 +97,23 @@ describe("FirewallValidator & Policy Guardrails", () => {
   });
 
   describe("Dry-Run TTL & Intent Binding Guards", () => {
+    it("blocks execution if no dry-run token was provided at all (hallucinated or missing tokenId)", () => {
+      const result = validator.validateExecution(
+        {
+          idempotencyKey: "test_key",
+          dryRunTokenId: "token_does_not_exist",
+          recipient: allowedA,
+          amount: 10_000n,
+        },
+        undefined,
+      );
+
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.reason).toBe("DRY_RUN_REQUIRED");
+      }
+    });
+
     it("blocks execution if dryRunToken has expired (> 60s)", () => {
       const now = Date.now();
       const expiredToken: DryRunToken = {

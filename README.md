@@ -3,7 +3,7 @@
 # DreamKeeper
 
 [![CI](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml/badge.svg)](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-77%20passing-22C55E?style=flat)](packages/core/tests)
+[![Tests](https://img.shields.io/badge/tests-78%20passing-22C55E?style=flat)](packages/core/tests)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Live](https://img.shields.io/badge/network-Base%20Sepolia-8A2BE2?style=flat)](https://sepolia.basescan.org)
 [![Stack](https://img.shields.io/badge/KeeperHub-MCP%20%7C%20Turnkey-orange?style=flat)](https://docs.keeperhub.com)
@@ -30,7 +30,7 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 
 | Metric                 |   Verified Value    | What This Means                                                  |
 | ---------------------- | :-----------------: | ---------------------------------------------------------------- |
-| **Test Suite**         | **77 / 77 passing** | Unit, integration, and property-based tests, zero network calls  |
+| **Test Suite**         | **78 / 78 passing** | Unit, integration, and property-based tests, zero network calls  |
 | **Secrets Needed**     |  **$0.00 / Zero**   | A cold clone verifies 100% of claims with zero API keys          |
 | **Execution States**   |    **3 States**     | `CONFIRMED`, `FAILED`, and `UNKNOWN` (with idempotent reconcile) |
 | **Simulation TTL**     |   **60 Seconds**    | Cryptographic tokens prevent execution against stale liquidity   |
@@ -60,6 +60,7 @@ pnpm --filter @dreamkeeper/demo-agent run start
 - [Watch the demo](#watch-the-demo)
 - [Judge it in 90 seconds](#judge-it-in-90-seconds)
 - [The core proof](#the-core-proof)
+- [Attack surface, checked one by one](#attack-surface-checked-one-by-one)
 - [The cold-clone field test](#the-cold-clone-field-test)
 - [The problem](#the-problem)
 - [What was built](#what-was-built)
@@ -111,6 +112,33 @@ recipient and amount exactly as given, then report the result back to the user.
 3. **Structured Corrective Feedback**: The LLM received a structured `FIREWALL_BLOCKED` message and correctly reported the failure back, rather than the transaction executing or the agent crashing.
 
 Reproduce it yourself: `pnpm demo:real-agent` (requires an `OPENROUTER_API_KEY` in `.env` — copy [`.env.example`](.env.example) to get started; OpenRouter has $0-cost models, so this doesn't require a paid account). Because this uses a real, free-tier model, it is genuinely non-deterministic — most runs reproduce the transcript above, but a free model occasionally returns a response with no tool call at all, in which case the script prints `WARNING: Expected the firewall to block this call, but it did not` instead. That warning means the LLM didn't attempt the call that run, not that the firewall failed to block one — re-run it, or use a different `OPENROUTER_MODEL`, to get a fresh attempt.
+
+---
+
+## Attack surface, checked one by one
+
+The scenario above is one row of a larger set. Every reason code below is a real branch in [`packages/core/src/firewall/validator.ts`](packages/core/src/firewall/validator.ts) — not a curated subset, all of them — each exercised by an automated test, and the two rows marked "live" were caught for real, unscripted, during the [cold-clone field test](#the-cold-clone-field-test).
+
+| # | What the agent tries | Firewall verdict | Real reason code | Proof |
+|---|---|---|---|---|
+| 1 | Sends value to an address the LLM picked (hallucinated or injected) | Blocked before any RPC call | `RECIPIENT_NOT_WHITELISTED` | Live LLM transcript above · [`firewall.test.ts`](packages/core/tests/firewall.test.ts) |
+| 2 | Requests a transfer above the per-transaction cap | Blocked | `AMOUNT_EXCEEDS_TX_CAP` | [`firewall.test.ts`](packages/core/tests/firewall.test.ts) |
+| 3 | Requests a transfer that would push the rolling 24h total over the daily cap | Blocked | `AMOUNT_EXCEEDS_DAILY_LIMIT` | [`firewall.test.ts`](packages/core/tests/firewall.test.ts) |
+| 4 | Calls a contract method not on the allowed-methods list | Blocked | `METHOD_NOT_ALLOWED` | [`contract-call.test.ts`](packages/core/tests/contract-call.test.ts) |
+| 5 | Tries to execute without simulating first | Blocked | `DRY_RUN_REQUIRED` | [`firewall.test.ts`](packages/core/tests/firewall.test.ts) |
+| 6 | Replays a dry-run token older than its 60-second TTL | Blocked | `DRY_RUN_TOKEN_EXPIRED` | [`contract-call.test.ts`](packages/core/tests/contract-call.test.ts) |
+| 7 | Simulates one intent, then executes a different one (bait-and-switch on the hash-bound token) | Blocked | `DRY_RUN_INTENT_MISMATCH` | [`contract-call.test.ts`](packages/core/tests/contract-call.test.ts) |
+| 8 | Invokes a DeFi protocol action not on the allow-list | Blocked | `PROTOCOL_ACTION_NOT_ALLOWED` | [`protocol-action.test.ts`](packages/core/tests/protocol-action.test.ts) |
+| 9 | Places a Tempo hold on a network not on the allow-list | Blocked | `TEMPO_NETWORK_NOT_ALLOWED` | [`tempo-hold.test.ts`](packages/core/tests/tempo-hold.test.ts) |
+| 10 | Places a Tempo hold in a token not on the allow-list | Blocked | `TEMPO_TOKEN_NOT_ALLOWED` | [`tempo-hold.test.ts`](packages/core/tests/tempo-hold.test.ts) |
+| 11 | Requests a Tempo hold above the per-hold cap | Blocked | `TEMPO_AMOUNT_EXCEEDS_HOLD_CAP` | [`tempo-hold.test.ts`](packages/core/tests/tempo-hold.test.ts) |
+| 12 | Requests a Tempo hold that would push the rolling 24h Tempo total over its cap | Blocked | `TEMPO_AMOUNT_EXCEEDS_DAILY_LIMIT` | [`tempo-hold.test.ts`](packages/core/tests/tempo-hold.test.ts) |
+| 13 | Calls release/cancel on a `paymentId` the client never created (hallucinated or someone else's) | Blocked | `TEMPO_PAYMENT_ID_UNKNOWN` | [`tempo-hold.test.ts`](packages/core/tests/tempo-hold.test.ts) |
+| 14 | Keeps retrying after repeated real execution failures | Outbound writes locked | `CIRCUIT_BREAKER_OPEN` | [`circuit-breaker.test.ts`](packages/core/tests/circuit-breaker.test.ts) |
+| 15 | *(live)* Supplies to Aave with an allowance already fully spent earlier that day | Failed and said so — not silently swallowed | `EXECUTION_FAILED` | [`docs/COLD_CLONE_TEST.md`](docs/COLD_CLONE_TEST.md), Step 3 |
+| 16 | *(live)* Asks `execute_check_and_execute` to act on a condition that isn't true on-chain | Correctly refused to act | `CHECK_CONDITION_NOT_MET` | [`docs/COLD_CLONE_TEST.md`](docs/COLD_CLONE_TEST.md), Step 2 |
+
+Rows 1-14 are deterministic and reproducible with `pnpm test`. Rows 15-16 depended on real, un-staged on-chain state at the moment the cold-clone test ran — they couldn't have been faked in advance, which is exactly what makes them worth more than the deterministic rows, not less.
 
 ---
 
@@ -321,7 +349,7 @@ dreamkeeper/
 │       │   ├── daydreams/         # Native Daydreams actions & extension wrapper
 │       │   ├── logger/            # Structured JSON logger (zero external dependencies)
 │       │   └── types/             # Strict TypeScript definitions & Zod schemas
-│       └── tests/                 # 77 unit, invariant, and guardrail tests
+│       └── tests/                 # 78 unit, invariant, and guardrail tests
 ├── examples/
 │   └── demo-agent/                # Showcase Daydreams agent
 │       └── src/
@@ -389,11 +417,11 @@ pnpm demo:native-compat
 ## Tests
 
 ```bash
-# Run all 77 tests with Vitest
+# Run all 78 tests with Vitest
 pnpm test
 ```
 
-_Note on test integrity: All 77 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
+_Note on test integrity: All 78 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
 
 **A separate, opt-in check against the real API.** No KeeperHub tool documents its response schema anywhere (verified — checked both `tools_documentation` and the raw JSON schema for every simulate-capable tool). That means a silent field rename on KeeperHub's side would only surface as a live bug in production, exactly like the real `gasEstimate` field-name mismatch this project hit and fixed (see above). `scripts/verify-api-contract.mjs` (`pnpm live:verify-contract`) turns that risk into a repeatable check: it calls all seven of DreamKeeper's real KeeperHub touchpoints and asserts the exact field names `LiveKeeperHubTransport` depends on are still there. It requires a real `KEEPERHUB_API_KEY`, so it isn't part of the zero-secret `pnpm test` suite — but every call it makes is a `simulate: true` request, a pure read, or a sign-and-hold immediately followed by a cancel, so it spends no gas and moves no value.
 
