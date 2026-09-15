@@ -2,6 +2,7 @@
   "name": "@dreamkeeper/demo-agent",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Showcase agent running Daydreams with DreamKeeper deterministic execution",
   "scripts": {
     "build": "tsc --build",

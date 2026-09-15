@@ -2,6 +2,7 @@
   "name": "@dreamkeeper/core",
   "version": "0.1.0",
   "description": "Deterministic Execution & Hallucination Firewall for Daydreams Agents via KeeperHub",
+  "license": "MIT",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
