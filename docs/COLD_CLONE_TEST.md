@@ -125,4 +125,26 @@ A real ERC-20 transfer, on a chain this exact code had never touched from this e
 
 Six endpoints, six honest outcomes — three succeeded, one was correctly rejected on its own terms, one hit a real allowance wall and said so, and one hallucinated attacker was blocked cold by a model that never knew it was being tested. None of it was staged for this run; the outcome of step 3 specifically could not have been predicted in advance. That's a stronger proof than a clean sweep would have been, because nobody could fake hitting a real wall on purpose.
 
-**Reproduce it yourself**: `git clone`, copy in your own `.env`, run `pnpm install && pnpm test && pnpm build`, then `pnpm demo:real-agent` for Step 2. The six endpoint calls in Step 3 were run via a short ad-hoc script directly against `KeeperHubClient` (not currently checked into the repo, since its exact outcome depends on your own account's live on-chain state) — the same three-line pattern as any of the Daydreams actions in `packages/core/src/daydreams/actions.ts`, just called directly instead of through an LLM.
+But two of those six doors — `execute_transfer` and `execute_check_and_execute` — had only been simulated, not actually walked through. And `execute_protocol_action` had hit a real wall instead of a real success. Half a proof isn't a proof. So the test was run again.
+
+---
+
+## Round Two — The Full Circle
+
+A second machine, same recipe: fresh `git clone`, zero cached state, real `.env` copied in, `pnpm install && pnpm test && pnpm build` — 77 green, same as always. This time, every call went all the way to broadcast, not just simulation, and the allowance from before was refilled first instead of assumed. Seven calls, five real transactions, and this time every single one came back `CONFIRMED`.
+
+| #   | Endpoint                                     | Result    | Tx hash                                                                                                                              | Independently verified                      |
+| --- | -------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| 1   | `execute_transfer`                           | CONFIRMED | [`0x0db83cfe...0ed2b2e7b`](https://sepolia.basescan.org/tx/0x0db83cfe01d0180a1da4d78e4c98b0663e9c97edc467de8924c46200ed2b2e7b)       | ✅ `status: 0x1`, block `0x2caee40`         |
+| 2   | `execute_contract_call` (`approve`)          | CONFIRMED | [`0xe823dec4...97a68435e5`](https://sepolia.basescan.org/tx/0xe823dec4c244a83d6e0c284f318efa8ec5c7b42b57020001b7900c97a68435e5)      | ✅ `status: 0x1`, block `0x2caee43`         |
+| 3   | `execute_check_and_execute`                  | CONFIRMED | [`0xd5d24540...218b9ad595`](https://sepolia.basescan.org/tx/0xd5d24540732e486f46344beb581827bc6ed45efa2028cbf0a961da218b9ad595)      | ✅ `status: 0x1`, block `0x2caee47`         |
+| 4   | `execute_protocol_action` (`aave-v3/supply`) | CONFIRMED | [`0xa0ee5c05...2525a4a992`](https://sepolia.basescan.org/tx/0xa0ee5c05c0d98248df39b2a73a4e3a62194e323729e9fb35d5aabe2525a4a992)      | ✅ `status: 0x1`, block `0x2caee4a`, 6 logs |
+| 5   | `get_spending_limits`                        | read OK   | —                                                                                                                                    | 0.02 ETH / 0.5 SOL default cap, $0 used     |
+| 6   | `tempo_sign_and_hold` → `tempo_cancel_hold`  | canceled  | —                                                                                                                                    | real hold, real cancel, nothing broadcast   |
+| 7   | `tempo_sign_and_hold` → `tempo_release_hold` | CONFIRMED | [`0xdc552fd8...10fbb986c4`](https://explore.testnet.tempo.xyz/tx/0xdc552fd82ab02fbf77e7bce62c433ef64303672badbb6d078477aa10fbb986c4) | ✅ `status: 0x1`, block `0x21c42d7`, 4 logs |
+
+One detail worth its own line: the wallet's Base Sepolia ETH balance was checked before and after transaction #1 — identical, to the wei. KeeperHub sponsored the gas; nothing was drawn from the org's own visible balance. That's consistent with `sponsored: true`, a field observed earlier this session on a real `execute_protocol_action` result but never previously called out this plainly.
+
+This is the complete set: every KeeperHub endpoint DreamKeeper integrates, exercised through its full execute path (not just a simulation), from a machine that had `git clone` as its entire history five minutes earlier, every result independently re-checked against the issuing chain's own RPC.
+
+**Reproduce it yourself**: `git clone`, copy in your own `.env`, run `pnpm install && pnpm test && pnpm build`, then `pnpm demo:real-agent` for Step 2. The endpoint calls in Step 3 and Round Two were run via a short ad-hoc script directly against `KeeperHubClient` (not currently checked into the repo, since the exact outcome — allowances, balances, whitelisted addresses — depends on your own account's live on-chain state) — the same three-line pattern as any of the Daydreams actions in `packages/core/src/daydreams/actions.ts`, just called directly instead of through an LLM.
