@@ -12,6 +12,7 @@
     "demo:firewall": "tsx src/test-firewall.ts",
     "demo:e2e": "tsx src/test-end-to-end-full.ts",
     "demo:real-agent": "tsx --env-file=../../.env src/test-real-agent.ts",
+    "demo:attack-scenarios": "tsx --env-file=../../.env src/test-attack-scenarios.ts",
     "demo:native-compat": "tsx src/test-daydreams-integration.ts",
     "test:e2e": "tsx src/test-end-to-end-full.ts",
     "live:demo": "tsx --env-file=../../.env src/run-demo.ts --live",
