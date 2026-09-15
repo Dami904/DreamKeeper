@@ -17,19 +17,17 @@ This document states plainly what DreamKeeper explicitly does and does not handl
 
 ## 2. Current Architectural Limitations
 
-### A. L2 Reorganization Depth
+### A. No Reorg-Depth Tracking
 
-- DreamKeeper checks receipt confirmations against standard RPC endpoints.
-- On Optimistic Rollups (e.g., Base, Arbitrum), soft confirmations occur within ~1-2 seconds, but final settlement on Ethereum L1 takes longer. DreamKeeper models a transaction as `CONFIRMED` upon inclusion in a mined L2 block. Reorgs deeper than 2 blocks on the L2 sequencer are not automatically rolled back by the client.
+- `OnChainKeeperHubTransport` waits for exactly **1 confirmation** (`viem`'s `confirmations: 1`) before marking a transaction `CONFIRMED` — there is no reorg-depth logic anywhere in this codebase, at any depth. A single-block reorg that evicts the transaction is not detected or rolled back automatically; the only recovery path is `keeperhub_reconcile`, which re-checks the current chain state rather than tracking reorg depth itself. On `LiveKeeperHubTransport`, finality is whatever KeeperHub's own `get_direct_execution_status` reports as `"completed"` — this repo does not independently re-verify block depth there either.
 
-### B. Multi-Hop Cross-Chain Atomicity
+### B. No Cross-Chain or Multi-Step Workflow Support
 
-- Multi-step workflows on a single chain are verified via dry-run simulation.
-- However, cross-chain workflows (e.g., bridge from Base to Arbitrum) are executed as sequential checkpoints rather than single-block atomic transactions. If a bridge provider experiences delays, DreamKeeper tracks the status as `PENDING` until arrival confirmation, but cannot force an on-chain rollback of the source chain burn/lock.
+- DreamKeeper has no bridge logic and no multi-step "workflow" concept of any kind — every action (`keeperhub_dry_run`, `keeperhub_execute`, `keeperhub_check_and_execute`, `keeperhub_protocol_action`, the Tempo hold lifecycle) is a single call to a single KeeperHub tool on a single chain. There is no `PENDING` execution state (`ExecutionState` is strictly `CONFIRMED` / `FAILED` / `UNKNOWN`) and no cross-chain sequencing of any kind. Moving value across chains is out of scope entirely, not a partially-handled edge case.
 
-### C. Off-Chain Oracle Discrepancy
+### C. `maxSlippageBps` Is Declared but Not Enforced
 
-- Invariant evaluation relies on KeeperHub's simulation node state fork. If an off-chain price feed or decentralized oracle updates between the simulation block and the private mempool inclusion block, minor slippage variance can occur within the configured `maxSlippageBps`.
+- `ExpectedInvariant.maxSlippageBps` exists in the type but `InvariantEvaluator.evaluate()` (`packages/core/src/firewall/invariants.ts`) never reads it — only `maxBalanceLoss`, `minTokensReceived`, and `maxGasUnits` are actually checked. Setting `maxSlippageBps` today has no effect; use `maxBalanceLoss`/`minTokensReceived` for real slippage protection until this field is either wired up or removed.
 
 ### D. Idempotency & Circuit Breaker State Is In-Memory Only
 

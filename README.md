@@ -273,9 +273,10 @@ This diagram depicts the simulate → invariant-check → dry-run-token → exec
 
 ## Honesty: limitations
 
-- **L2 Sequencer Reorganizations.** Transactions are marked `CONFIRMED` upon inclusion in a mined L2 block (Base/Arbitrum). Reorgs deeper than 2 blocks on the sequencer are not automatically rolled back by the client.
-- **Cross-Chain Multi-Hop Atomicity.** Workflows on a single chain are simulated atomically; cross-chain bridge sequences rely on sequential checkpoints.
+- **No Reorg-Depth Tracking.** The on-chain fallback waits for exactly 1 confirmation before marking `CONFIRMED` — there is no reorg-depth logic at any depth, in this repo or via KeeperHub's own status reporting.
+- **No Cross-Chain or Multi-Step Workflows.** Every action is a single call to a single KeeperHub tool on a single chain — there's no bridge logic, no multi-step workflow concept, and no `PENDING` state (`ExecutionState` is strictly `CONFIRMED`/`FAILED`/`UNKNOWN`). Moving value across chains is out of scope entirely.
 - **In-Memory Idempotency Store Default.** The default store runs in memory. Multi-container serverless deployments should inject a persistent Redis/PostgreSQL adapter.
+- **`maxSlippageBps` Is Declared but Not Enforced.** It exists on `ExpectedInvariant` but `InvariantEvaluator` never reads it — only `maxBalanceLoss`, `minTokensReceived`, and `maxGasUnits` are actually checked. Use those for real slippage protection.
 - **Non-Standard Fee-on-Transfer Tokens.** Deflationary tokens with transfer taxes require explicit slippage tolerances in `expectedInvariant` to avoid false-positive invariant rejections.
 
 _See [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for full architectural disclosures._
