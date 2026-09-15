@@ -44,6 +44,14 @@ pnpm test
 pnpm --filter @dreamkeeper/demo-agent run start
 ```
 
+**The 5-minute review path**, if you want more than the numbers above:
+
+1. **(30s) Click the CI badge above.** It's live — it's checking this exact commit, not a badge someone typed in.
+2. **(60s) Run one `curl` from the [verified transaction ledger](#verified-transaction-ledger) below.** No install, no key — it queries a public RPC directly and returns the same `status: 0x1` claimed in this README.
+3. **(90s) Read [the core proof](#the-core-proof).** A real LLM decides, on its own, to attack this system — and gets blocked. Not scripted; reproducible with `pnpm demo:real-agent`.
+4. **(90s) Open one linked commit from ["Real bugs caught by testing"](#verified-transaction-ledger).** Each is a live-API assumption that turned out wrong, found by actually calling KeeperHub, with the diff that fixed it — not a claim, a commit.
+5. **(30s) Skim [Honesty: limitations](#honesty-limitations).** What's still unverified is stated plainly, not hidden.
+
 ---
 
 ## Table of contents
@@ -145,6 +153,7 @@ Every row below is a real broadcast, independently confirmed by querying the cha
 
 | Endpoint                                     | Chain         | Tx hash                                                                                                                           | Confirmed                                                               |
 | -------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `execute_transfer`                           | Base Sepolia  | [`0x2e682f22...ac6f498`](https://sepolia.basescan.org/tx/0x2e682f22a99409d9a94a0cf4e4bc9ecc86cc45d79d2c26d7146b6849fac6f498)      | ✅ `status: 0x1`                                                        |
 | `execute_contract_call` → `approve`          | Base Sepolia  | [`0xad3cddf9...9c7ca64`](https://sepolia.basescan.org/tx/0xad3cddf93a30e6a7a9406cb5cc7c39780c7c103baa1652f3282a5e3319c7ca64)      | ✅ `status: 0x1`                                                        |
 | `execute_protocol_action` → `aave-v3/supply` | Base Sepolia  | [`0x3171a172...620b59`](https://sepolia.basescan.org/tx/0x3171a1724c0574d9946fe2a4d79cd547da6b1e8c239a09fa9e754cb947620b59)       | ✅ `status: 0x1`, 7 logs (transfer + aToken mint + Aave `Supply` event) |
 | `tempo_release_hold`                         | Tempo Testnet | [`0xc17284a1...c2bb190`](https://explore.testnet.tempo.xyz/tx/0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190) | ✅ `status: 0x1`, real ERC-20 `Transfer` event                          |
@@ -160,7 +169,11 @@ curl -s https://sepolia.base.org \
 # "status":"0x1"  ->  the transaction succeeded on-chain
 ```
 
-See [`docs/API_NOTES.md`](docs/API_NOTES.md) for the full request/response payloads behind each row, plus real findings caught by testing against the live API rather than assuming its documented schema — a field-name bug (`gasEstimate` vs. an assumed name), a response-shape bug (`execute_check_and_execute`'s `executed`/`conditionResult` fields, not `wouldRevert`), and a misclassification bug this session's own live testing caught and fixed (a synchronous read-type protocol action was returning `UNKNOWN` instead of `CONFIRMED`).
+See [`docs/API_NOTES.md`](docs/API_NOTES.md) for the full request/response payloads behind each row. Real bugs caught by testing against the live API rather than trusting its documented schema, each linked to the exact commit that found and fixed it — open the diff, not just the claim:
+
+- **Field-name bug**: assumed `estimatedGasUnits`/`gasUsed`; the real field is `gasEstimate` — [`a2cc0d9`](https://github.com/Dami904/DreamKeeper/commit/a2cc0d9)
+- **Response-shape bug**: assumed `execute_check_and_execute` used `wouldRevert` like the other tools; a condition-not-met response has no such field at all, only `executed`/`conditionResult` — [`bca93d9`](https://github.com/Dami904/DreamKeeper/commit/bca93d9)
+- **Misclassification bug**: a synchronous read-type protocol action (no `execution_id`) was being returned as `UNKNOWN` instead of `CONFIRMED` — [`11302df`](https://github.com/Dami904/DreamKeeper/commit/11302df)
 
 ---
 
