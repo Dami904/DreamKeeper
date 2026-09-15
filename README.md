@@ -108,7 +108,7 @@ recipient and amount exactly as given, then report the result back to the user.
 2. **Zero On-Chain Exposure**: Because the recipient was absent from `allowedRecipients`, the call failed closed before touching an RPC, KeeperHub, or Turnkey signer. Zero gas was consumed.
 3. **Structured Corrective Feedback**: The LLM received a structured `FIREWALL_BLOCKED` message and correctly reported the failure back, rather than the transaction executing or the agent crashing.
 
-Reproduce it yourself: `pnpm demo:real-agent` (requires an `OPENROUTER_API_KEY` in `.env`; OpenRouter has $0-cost models, so this doesn't require a paid account).
+Reproduce it yourself: `pnpm demo:real-agent` (requires an `OPENROUTER_API_KEY` in `.env`; OpenRouter has $0-cost models, so this doesn't require a paid account). Because this uses a real, free-tier model, it is genuinely non-deterministic — most runs reproduce the transcript above, but a free model occasionally returns a response with no tool call at all, in which case the script prints `WARNING: Expected the firewall to block this call, but it did not` instead. That warning means the LLM didn't attempt the call that run, not that the firewall failed to block one — re-run it, or use a different `OPENROUTER_MODEL`, to get a fresh attempt.
 
 ---
 
