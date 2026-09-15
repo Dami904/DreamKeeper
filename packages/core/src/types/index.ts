@@ -281,6 +281,13 @@ export interface ExecutionResult {
   error?: string | undefined;
   revertReason?: string | undefined;
   confirmedAt?: number | undefined;
+  /**
+   * Present only for read-type protocol actions (e.g. an oracle price read
+   * via execute_protocol_action) that complete synchronously with a value
+   * but no on-chain broadcast — there is no txHash because nothing was
+   * written to the chain.
+   */
+  resultValue?: string | undefined;
 }
 
 /**

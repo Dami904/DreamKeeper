@@ -370,6 +370,15 @@ export function createDaydreamsActions(client: KeeperHubClient) {
       });
 
       if (result.state === "CONFIRMED") {
+        if (result.resultValue !== undefined) {
+          return {
+            status: "CONFIRMED",
+            resultValue: result.resultValue,
+            explorerUrl: result.explorerUrl,
+            confirmedAt: result.confirmedAt,
+            summary: `Protocol action '${args.actionType}' completed synchronously with result: ${result.resultValue}.`,
+          };
+        }
         return {
           status: "CONFIRMED",
           txHash: result.txHash,

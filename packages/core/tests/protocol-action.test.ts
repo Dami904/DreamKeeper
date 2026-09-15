@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { FirewallValidator } from "../src/firewall/validator.js";
 import { MockKeeperHubTransport } from "../src/keeperhub/mock-transport.js";
 import { KeeperHubClient } from "../src/keeperhub/client.js";
@@ -129,6 +129,32 @@ describe("Protocol Action Support (execute_protocol_action)", () => {
 
       expect(first.status).toBe("CONFIRMED");
       expect(second.txHash).toBe(first.txHash);
+    });
+
+    it("presents a synchronous read-type success (resultValue, no txHash) distinctly from a broadcast", async () => {
+      const client = new KeeperHubClient(
+        { mode: "mock", policy },
+        { transport: new MockKeeperHubTransport() },
+      );
+      vi.spyOn(client, "executeProtocolAction").mockResolvedValue({
+        state: "CONFIRMED",
+        idempotencyKey: "read_key",
+        resultValue: "2478150000000000000000",
+        explorerUrl:
+          "https://etherscan.io/address/0x46ef0071b1E2fF6B42d36e5A177EA43Ae5917f4E",
+        confirmedAt: Date.now(),
+      });
+      const actions = createDaydreamsActions(client);
+
+      const result = await actions.protocolActionAction.handler({
+        idempotencyKey: "read_key",
+        actionType: "chronicle/eth-usd-read",
+        paramsJson: JSON.stringify({ network: "1" }),
+      });
+
+      expect(result.status).toBe("CONFIRMED");
+      expect(result.resultValue).toBe("2478150000000000000000");
+      expect(result.txHash).toBeUndefined();
     });
   });
 });

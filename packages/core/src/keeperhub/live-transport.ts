@@ -1268,6 +1268,28 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       call.parsed?.execution_id || call.parsed?.executionId || call.parsed?.id;
 
     if (!executionId) {
+      // Read-type protocol actions (e.g. an oracle price read) complete
+      // synchronously with `{success:true, result, addressLink}` and never
+      // broadcast anything — there is no execution_id to poll because
+      // nothing was written to the chain. Verified live against
+      // chronicle/eth-usd-read on Ethereum mainnet.
+      if (call.parsed?.result !== undefined) {
+        logger.info(
+          "KeeperHub protocol action completed synchronously (read)",
+          {
+            idempotencyKey: intent.idempotencyKey,
+            context: { actionType: intent.actionType },
+          },
+        );
+        return {
+          state: "CONFIRMED",
+          idempotencyKey: intent.idempotencyKey,
+          resultValue: String(call.parsed.result),
+          explorerUrl: call.parsed?.addressLink,
+          confirmedAt: Date.now(),
+        };
+      }
+
       logger.warn("KeeperHub protocol action response had no execution_id", {
         idempotencyKey: intent.idempotencyKey,
         context: { rawText: call.text },
@@ -1276,7 +1298,7 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
         state: "UNKNOWN",
         idempotencyKey: intent.idempotencyKey,
         error:
-          "KeeperHub did not return a recognizable execution_id for this request; verify response shape once a live success sample is available.",
+          "KeeperHub did not return a recognizable execution_id or result for this request; verify response shape once a live success sample is available.",
       };
     }
 
