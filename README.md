@@ -139,6 +139,13 @@ DreamKeeper doesn't wrap a single KeeperHub call — every write path an agent c
 
 `execute_protocol_action`, `tempo_sign_and_hold`, and `get_spending_limits` have no dry-run/simulate step — the first two broadcast (or sign) immediately once approved by the firewall, and the last is a plain read. Every Tempo tool call is gated by its own default-deny whitelists (`allowedTempoNetworks`, `allowedTempoTokens`) and per-hold/rolling-24h decimal caps, independent of the EVM-side `FirewallPolicy` fields — see [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md#threat-6-hallucinated-or-adversarial-tempo-paymentid) for how `keeperhub_tempo_release_hold`/`keeperhub_tempo_cancel_hold` guard against a hallucinated `paymentId`.
 
+**Real verified transactions** (not mock output — independently checked via `eth_getTransactionReceipt` against each chain's own RPC, not just the tool's own printout):
+
+- Aave V3 `supply` on Base Sepolia via `execute_protocol_action`: [`0x3171a1724c0574d9946fe2a4d79cd547da6b1e8c239a09fa9e754cb947620b59`](https://sepolia.basescan.org/tx/0x3171a1724c0574d9946fe2a4d79cd547da6b1e8c239a09fa9e754cb947620b59)
+- Tempo hold release via `tempo_release_hold` on Tempo Testnet: [`0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190`](https://explore.testnet.tempo.xyz/tx/0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190)
+
+See [`docs/API_NOTES.md`](docs/API_NOTES.md) for the full request/response detail behind each.
+
 ---
 
 ## Architecture
