@@ -60,6 +60,7 @@ pnpm --filter @dreamkeeper/demo-agent run start
 - [Watch the demo](#watch-the-demo)
 - [Judge it in 90 seconds](#judge-it-in-90-seconds)
 - [The core proof](#the-core-proof)
+- [The cold-clone field test](#the-cold-clone-field-test)
 - [The problem](#the-problem)
 - [What was built](#what-was-built)
 - [KeeperHub endpoints integrated](#keeperhub-endpoints-integrated)
@@ -113,6 +114,14 @@ Reproduce it yourself: `pnpm demo:real-agent` (requires an `OPENROUTER_API_KEY` 
 
 ---
 
+## The cold-clone field test
+
+Everything above was also run from a machine that had never seen this code before — a genuinely fresh `git clone`, zero cached state, pointed at the real KeeperHub account and asked to open all six of its doors in one sitting. It didn't go perfectly, and that's the point: one call hit a real, un-scripted wall (an Aave allowance already spent earlier that same day) and reported it honestly instead of faking a pass. The other five — a transfer simulation, a check-and-execute condition read against real USDC supply, a spending-limits read, and a full Tempo hold→cancel and hold→release cycle — all succeeded for real, independently re-verified against each chain's own RPC.
+
+Full blow-by-blow, real numbers and hashes throughout: **[`docs/COLD_CLONE_TEST.md`](docs/COLD_CLONE_TEST.md)**.
+
+---
+
 ## The problem
 
 Giving an autonomous AI agent a private key is terrifying. If you run an agent framework (like Daydreams) with raw `viem` or an in-memory key, you are one prompt injection, one bad decimal hallucination, or one network timeout away from catastrophe. If an RPC drops a request, the agent retries blindly and double-spends. If an agent loops infinitely, it drains its wallet in gas. Developers are forced to choose between completely castrating an agent's autonomy or giving it an unmonitored hot wallet with no guardrails.
@@ -152,12 +161,13 @@ DreamKeeper doesn't wrap a single KeeperHub call — every write path an agent c
 
 Every row below is a real broadcast, independently confirmed by querying the chain's own RPC directly — not the tool's own success printout — so these are recomputable, not taken on trust.
 
-| Endpoint                                     | Chain         | Tx hash                                                                                                                           | Confirmed                                                               |
-| -------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `execute_transfer`                           | Base Sepolia  | [`0x2e682f22...ac6f498`](https://sepolia.basescan.org/tx/0x2e682f22a99409d9a94a0cf4e4bc9ecc86cc45d79d2c26d7146b6849fac6f498)      | ✅ `status: 0x1`                                                        |
-| `execute_contract_call` → `approve`          | Base Sepolia  | [`0xad3cddf9...9c7ca64`](https://sepolia.basescan.org/tx/0xad3cddf93a30e6a7a9406cb5cc7c39780c7c103baa1652f3282a5e3319c7ca64)      | ✅ `status: 0x1`                                                        |
-| `execute_protocol_action` → `aave-v3/supply` | Base Sepolia  | [`0x3171a172...620b59`](https://sepolia.basescan.org/tx/0x3171a1724c0574d9946fe2a4d79cd547da6b1e8c239a09fa9e754cb947620b59)       | ✅ `status: 0x1`, 7 logs (transfer + aToken mint + Aave `Supply` event) |
-| `tempo_release_hold`                         | Tempo Testnet | [`0xc17284a1...c2bb190`](https://explore.testnet.tempo.xyz/tx/0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190) | ✅ `status: 0x1`, real ERC-20 `Transfer` event                          |
+| Endpoint                                     | Chain         | Tx hash                                                                                                                            | Confirmed                                                                           |
+| -------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `execute_transfer`                           | Base Sepolia  | [`0x2e682f22...ac6f498`](https://sepolia.basescan.org/tx/0x2e682f22a99409d9a94a0cf4e4bc9ecc86cc45d79d2c26d7146b6849fac6f498)       | ✅ `status: 0x1`                                                                    |
+| `execute_contract_call` → `approve`          | Base Sepolia  | [`0xad3cddf9...9c7ca64`](https://sepolia.basescan.org/tx/0xad3cddf93a30e6a7a9406cb5cc7c39780c7c103baa1652f3282a5e3319c7ca64)       | ✅ `status: 0x1`                                                                    |
+| `execute_protocol_action` → `aave-v3/supply` | Base Sepolia  | [`0x3171a172...620b59`](https://sepolia.basescan.org/tx/0x3171a1724c0574d9946fe2a4d79cd547da6b1e8c239a09fa9e754cb947620b59)        | ✅ `status: 0x1`, 7 logs (transfer + aToken mint + Aave `Supply` event)             |
+| `tempo_release_hold`                         | Tempo Testnet | [`0xc17284a1...c2bb190`](https://explore.testnet.tempo.xyz/tx/0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190)  | ✅ `status: 0x1`, real ERC-20 `Transfer` event                                      |
+| `tempo_release_hold` (from a cold clone)     | Tempo Testnet | [`0x54a65358...c79786f2`](https://explore.testnet.tempo.xyz/tx/0x54a6535865935f0a358d7d9cd943b640a9b7bc7a7e2b2b1bb7966c98c79786f2) | ✅ `status: 0x1`, 4 logs — see [`docs/COLD_CLONE_TEST.md`](docs/COLD_CLONE_TEST.md) |
 
 Check any row yourself — this is the exact command used to verify the Aave supply above, no API key or wallet required:
 
@@ -320,7 +330,8 @@ dreamkeeper/
 ├── docs/
 │   ├── API_NOTES.md               # KeeperHub failure modes & transport semantics
 │   ├── LIMITATIONS.md             # Documented edge cases & boundaries
-│   └── THREAT_MODEL.md            # Trust assumptions & security boundaries
+│   ├── THREAT_MODEL.md            # Trust assumptions & security boundaries
+│   └── COLD_CLONE_TEST.md         # A fresh clone tests all 6 KeeperHub endpoints for real
 ├── .github/workflows/ci.yml       # 4 separate CI jobs (lint, typecheck, test, build)
 ├── .env.example                   # Every env var this repo reads; none required for tests/mock mode
 ├── pnpm-workspace.yaml            # Monorepo configuration
