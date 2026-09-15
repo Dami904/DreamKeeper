@@ -22,7 +22,8 @@
     "live:check-balance": "node --env-file=.env scripts/check-balance.mjs",
     "live:check-vault": "node --env-file=.env scripts/check-vault-balance.mjs",
     "live:wallet": "node scripts/create-wallet.mjs",
-    "live:vault": "node scripts/create-vault-wallet.mjs"
+    "live:vault": "node scripts/create-vault-wallet.mjs",
+    "live:verify-contract": "node --env-file=.env scripts/verify-api-contract.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.13.5",

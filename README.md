@@ -268,6 +268,7 @@ This diagram depicts the simulate → invariant-check → dry-run-token → exec
 
 ## Engineering decisions
 
+- **A hard address whitelist, not a "does this look right" check.** Models tokenize text — they cannot reliably count characters in a hex string, and a subtly wrong address is invisible to a glance-check the way a wrong word isn't. `allowedRecipients` doesn't ask the LLM to sanity-check an address; it removes the LLM's address entirely from the trust boundary. The model can hallucinate, get prompt-injected, or simply be wrong about where funds should go — none of it matters, because the firewall never asks it whether an address is correct, only whether it's on the list.
 - **Invariants evaluated in TypeScript, not by the LLM.** Probabilistic models make math errors on hex numbers, token decimals, and slippage basis points. We assert balance deltas in deterministic code.
 - **60-Second TTL on Dry-Run Authorizations.** On-chain liquidity moves. An approval obtained minutes ago is dangerous to execute. Tokens expire in 60s, preventing stale execution.
 - **Persisted Idempotency Keys _Pre-Request_.** If an idempotency key is generated after a response arrives, a network timeout leaves the system blind. We persist before firing the request.
@@ -393,6 +394,8 @@ pnpm test
 ```
 
 _Note on test integrity: All 77 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
+
+**A separate, opt-in check against the real API.** No KeeperHub tool documents its response schema anywhere (verified — checked both `tools_documentation` and the raw JSON schema for every simulate-capable tool). That means a silent field rename on KeeperHub's side would only surface as a live bug in production, exactly like the real `gasEstimate` field-name mismatch this project hit and fixed (see above). `scripts/verify-api-contract.mjs` (`pnpm live:verify-contract`) turns that risk into a repeatable check: it calls all seven of DreamKeeper's real KeeperHub touchpoints and asserts the exact field names `LiveKeeperHubTransport` depends on are still there. It requires a real `KEEPERHUB_API_KEY`, so it isn't part of the zero-secret `pnpm test` suite — but every call it makes is a `simulate: true` request, a pure read, or a sign-and-hold immediately followed by a cancel, so it spends no gas and moves no value.
 
 ---
 
