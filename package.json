@@ -15,6 +15,7 @@
     "demo:e2e": "pnpm --filter @dreamkeeper/demo-agent run demo:e2e",
     "demo:firewall": "pnpm --filter @dreamkeeper/demo-agent run demo:firewall",
     "demo:real-agent": "pnpm --filter @dreamkeeper/demo-agent run demo:real-agent",
+    "demo:native-compat": "pnpm --filter @dreamkeeper/demo-agent run demo:native-compat",
     "live:demo": "pnpm --filter @dreamkeeper/demo-agent run live:demo",
     "live:e2e": "pnpm --filter @dreamkeeper/demo-agent run live:e2e",
     "live:check-balance": "node --env-file=.env scripts/check-balance.mjs",

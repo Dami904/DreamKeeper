@@ -209,11 +209,13 @@ flowchart TD
     end
 ```
 
+This diagram depicts the simulate → invariant-check → dry-run-token → execute shape shared by transfers, contract calls, and check-and-execute. Two endpoints deliberately don't follow it: `execute_protocol_action` has no simulate step at all (firewall-gate then broadcast immediately), and the Tempo lifecycle (`tempo_sign_and_hold` → `tempo_release_hold`/`tempo_cancel_hold`) produces a real signed artifact in place of a simulation, decided on separately from creation — see the [endpoints table](#keeperhub-endpoints-integrated) above for exactly how each of the 11 actions differs.
+
 ### Module Responsibilities
 
 | File / Module                                                                                          | Role                                                                                                                                                                           |
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`packages/core/src/firewall/validator.ts`](packages/core/src/firewall/validator.ts)                   | Default-deny whitelist, spend limits, 24h velocity, and dry-run TTL token validation                                                                                           |
+| [`packages/core/src/firewall/validator.ts`](packages/core/src/firewall/validator.ts)                   | Default-deny whitelists, spend limits, 24h velocity, dry-run TTL tokens, plus protocol-action and Tempo-specific network/token/amount gating                                   |
 | [`packages/core/src/firewall/invariants.ts`](packages/core/src/firewall/invariants.ts)                 | Mathematical post-condition assertions on simulation balance deltas and gas units                                                                                              |
 | [`packages/core/src/firewall/circuit-breaker.ts`](packages/core/src/firewall/circuit-breaker.ts)       | Runaway loop protection; trips after 3 reverts or 2 consecutive unknown states                                                                                                 |
 | [`packages/core/src/keeperhub/state-machine.ts`](packages/core/src/keeperhub/state-machine.ts)         | 3-state classification: `CONFIRMED`, `FAILED`, and `UNKNOWN`                                                                                                                   |
@@ -222,7 +224,8 @@ flowchart TD
 | [`packages/core/src/keeperhub/mock-transport.ts`](packages/core/src/keeperhub/mock-transport.ts)       | Offline zero-secret simulator for cold judge reproducibility and CI                                                                                                            |
 | [`packages/core/src/keeperhub/live-transport.ts`](packages/core/src/keeperhub/live-transport.ts)       | Real KeeperHub MCP client: session handshake, transfers/contract calls/check-and-execute/protocol actions/spending limits, Tempo hold/release/cancel, execution-status polling |
 | [`packages/core/src/keeperhub/onchain-transport.ts`](packages/core/src/keeperhub/onchain-transport.ts) | Direct-signer fallback (`viem`) used only when no `KEEPERHUB_API_KEY` is configured                                                                                            |
-| [`packages/core/src/daydreams/extension.ts`](packages/core/src/daydreams/extension.ts)                 | Native Daydreams extension factory registering typed Zod action schemas                                                                                                        |
+| [`packages/core/src/daydreams/actions.ts`](packages/core/src/daydreams/actions.ts)                     | Defines all 11 Daydreams action handlers (`keeperhub_*`), each wrapping one `KeeperHubClient` method with a typed Zod schema                                                   |
+| [`packages/core/src/daydreams/extension.ts`](packages/core/src/daydreams/extension.ts)                 | Native Daydreams extension factory assembling the actions above into the registered `dreamkeeperExtension`                                                                     |
 
 ---
 
@@ -261,9 +264,10 @@ flowchart TD
 ## Integrity: what's staged vs. real
 
 - **The Demo & Verification Scripts ([`run-demo.ts`](examples/demo-agent/src/run-demo.ts), [`test-end-to-end-full.ts`](examples/demo-agent/src/test-end-to-end-full.ts))**: Default to `mock` mode (`MockKeeperHubTransport`) so that hackathon judges, CI, and external auditors can verify 100% of state transitions, invariants, and firewall rules offline with **$0.00 spent and zero private keys**. Transaction hashes in mock mode are deterministically generated in-memory simulations and are not broadcast to public BaseScan nodes.
-- **Live Mode (`LiveKeeperHubTransport`)**: Passing `--live` (via `pnpm live:demo` / `pnpm live:e2e`) performs a real MCP session handshake against the live KeeperHub endpoint (`https://app.keeperhub.com/mcp`) and broadcasts through KeeperHub's Turnkey-backed wallet integration on Base Sepolia (`chainId: 84532`) — the resulting transaction is signed and routed entirely by KeeperHub, not by a key held in this repo. This is selected automatically whenever `KEEPERHUB_API_KEY` is set, and covers all six real KeeperHub tools this repo calls (see [KeeperHub endpoints integrated](#keeperhub-endpoints-integrated)), not just `execute_transfer`.
+- **Live Mode (`LiveKeeperHubTransport`)**: Passing `--live` (via `pnpm live:demo` / `pnpm live:e2e`) performs a real MCP session handshake against the live KeeperHub endpoint (`https://app.keeperhub.com/mcp`) and broadcasts through KeeperHub's Turnkey-backed wallet integration on Base Sepolia (`chainId: 84532`) — the resulting transaction is signed and routed entirely by KeeperHub, not by a key held in this repo. This is selected automatically whenever `KEEPERHUB_API_KEY` is set, and covers all nine real KeeperHub MCP tools this repo calls (see [KeeperHub endpoints integrated](#keeperhub-endpoints-integrated)), not just `execute_transfer`.
 - **Direct On-Chain Fallback (`OnChainKeeperHubTransport`)**: If no `KEEPERHUB_API_KEY` is configured but a `PRIVATE_KEY` is, live mode falls back to signing and broadcasting directly via `viem` against the public RPC — the same firewall, invariant, and 3-state logic applies, but execution bypasses KeeperHub/Turnkey entirely. This exists so the safety layer is still demonstrable without a KeeperHub account, and is clearly a different code path from the one above.
 - **Scripted vs. LLM-Driven Demos**: `run-demo.ts`, `test-firewall.ts`, and `test-end-to-end-full.ts` call each Daydreams action's handler directly with a fixed payload — deterministic and reproducible, but not an LLM making a decision. [`test-real-agent.ts`](examples/demo-agent/src/test-real-agent.ts) is the one script where a real, live model (via OpenRouter) reads the adversarial prompt itself, decides whether to call `keeperhub_dry_run`, and gets blocked by the firewall on its own initiative — run it with `pnpm demo:real-agent`.
+- **Real Daydreams Registration, Not an Internal Shortcut**: [`test-daydreams-integration.ts`](examples/demo-agent/src/test-daydreams-integration.ts) registers `dreamkeeperExtension` through Daydreams' own `createDreams()` call and confirms all 11 actions come back registered — proving this is a native Daydreams extension the framework itself accepts, not code that only works by calling DreamKeeper's internals directly. Run it with `pnpm demo:native-compat`.
 
 ---
 
@@ -308,7 +312,8 @@ dreamkeeper/
 │           ├── run-demo.ts        # End-to-end execution walkthrough (scripted)
 │           ├── test-end-to-end-full.ts # Full 5-action Daydreams + DreamKeeper + KeeperHub E2E (scripted)
 │           ├── test-firewall.ts   # Prompt injection & cap defense showcase (scripted)
-│           └── test-real-agent.ts # Genuine LLM-driven run via OpenRouter (not scripted)
+│           ├── test-real-agent.ts # Genuine LLM-driven run via OpenRouter (not scripted)
+│           └── test-daydreams-integration.ts # Registers via real createDreams(), not an internal shortcut
 ├── scripts/                        # Live-mode wallet utilities (balance checks, wallet/vault creation)
 ├── docs/
 │   ├── API_NOTES.md               # KeeperHub failure modes & transport semantics
@@ -351,6 +356,9 @@ pnpm demo:e2e
 
 # 7. Run a genuine LLM-driven prompt-injection test (requires an OPENROUTER_API_KEY in .env)
 pnpm demo:real-agent
+
+# 8. Confirm native Daydreams compatibility: registers via the real createDreams(), not an internal shortcut
+pnpm demo:native-compat
 ```
 
 ---
