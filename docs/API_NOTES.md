@@ -214,11 +214,7 @@ All workflow executions must be classified into one of three explicit states:
 ## 4. Idempotency Key Semantics
 
 - **Generation Rule**: The idempotency key must be generated and persisted **locally before the network request is fired**.
-- **Scope**: Idempotency is **semantic**, not merely HTTP transport level. The key binds:
-  - `sender`: The Daydreams agent address / identifier.
-  - `recipient`: The target contract or address.
-  - `amount`: Token or native quantity.
-  - `actionPayloadHash`: SHA-256 hash of the normalized calldata and parameters.
+- **Scope**: Idempotency is **semantic**, not merely HTTP transport level. `generateSemanticIdempotencyKey()` (`packages/core/src/keeperhub/idempotency.ts`) hashes `sender` (agent identifier, defaults to `"default-agent"`), `recipient`, `amount`, and `calldata` into a 16-hex-char prefix, then appends an 8-char random nonce (`dk_<hashPrefix>_<nonce>`) — the nonce means the _key itself_ must be reused by the caller across retries, not regenerated from scratch each time. Separately, `IdempotencyRecord.actionPayloadHash` (populated via `computeIntentHash()` when `savePreRequest()` is called) stores a fuller intent hash alongside the record for tamper-detection auditing — it is not itself part of the key.
 - **Retry Guarantee**: If a network timeout occurs and the execute call is retried with the same `idempotencyKey`, KeeperHub returns the existing `execution_id`/`txHash` rather than submitting a duplicate transaction. (`live-transport.ts` also tracks `idempotencyKey → execution_id` locally, so `keeperhub_reconcile` can resume polling `get_direct_execution_status` for an in-flight or previously-`UNKNOWN` execution without needing to call `execute_transfer` again.)
 
 ---

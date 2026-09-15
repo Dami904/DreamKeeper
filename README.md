@@ -3,7 +3,7 @@
 # DreamKeeper
 
 [![CI](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml/badge.svg)](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-76%20passing-22C55E?style=flat)](packages/core/tests)
+[![Tests](https://img.shields.io/badge/tests-77%20passing-22C55E?style=flat)](packages/core/tests)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Live](https://img.shields.io/badge/network-Base%20Sepolia-8A2BE2?style=flat)](https://sepolia.basescan.org)
 [![Stack](https://img.shields.io/badge/KeeperHub-MCP%20%7C%20Turnkey-orange?style=flat)](https://docs.keeperhub.com)
@@ -30,7 +30,7 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 
 | Metric                 |   Verified Value    | What This Means                                                  |
 | ---------------------- | :-----------------: | ---------------------------------------------------------------- |
-| **Test Suite**         | **76 / 76 passing** | Unit, integration, and property-based tests, zero network calls  |
+| **Test Suite**         | **77 / 77 passing** | Unit, integration, and property-based tests, zero network calls  |
 | **Secrets Needed**     |  **$0.00 / Zero**   | A cold clone verifies 100% of claims with zero API keys          |
 | **Execution States**   |    **3 States**     | `CONFIRMED`, `FAILED`, and `UNKNOWN` (with idempotent reconcile) |
 | **Simulation TTL**     |   **60 Seconds**    | Cryptographic tokens prevent execution against stale liquidity   |
@@ -256,7 +256,7 @@ This diagram depicts the simulate → invariant-check → dry-run-token → exec
 - **Invariants evaluated in TypeScript, not by the LLM.** Probabilistic models make math errors on hex numbers, token decimals, and slippage basis points. We assert balance deltas in deterministic code.
 - **60-Second TTL on Dry-Run Authorizations.** On-chain liquidity moves. An approval obtained minutes ago is dangerous to execute. Tokens expire in 60s, preventing stale execution.
 - **Persisted Idempotency Keys _Pre-Request_.** If an idempotency key is generated after a response arrives, a network timeout leaves the system blind. We persist before firing the request.
-- **Dual-Mode Mock / Live Transport.** Judges evaluate repositories cold. Requiring funded testnet wallets or private API keys breaks automated judging. `mock` runs 100% offline; `live` runs on Base Sepolia.
+- **Dual-Mode Mock / Live Transport.** Judges evaluate repositories cold. Requiring funded testnet wallets or private API keys breaks automated judging. `mock` runs 100% offline; `live` runs against real KeeperHub on Base Sepolia (and Tempo Testnet for the hold lifecycle).
 - **Native `fetch` for the KeeperHub Client.** `LiveKeeperHubTransport` talks to KeeperHub's MCP endpoint with native `fetch`, no KeeperHub SDK dependency. (`viem` is a real dependency, used only by the direct on-chain fallback transport for signing when no KeeperHub API key is configured.)
 
 ---
@@ -305,7 +305,7 @@ dreamkeeper/
 │       │   ├── daydreams/         # Native Daydreams actions & extension wrapper
 │       │   ├── logger/            # Structured JSON logger (zero external dependencies)
 │       │   └── types/             # Strict TypeScript definitions & Zod schemas
-│       └── tests/                 # 76 unit, invariant, and guardrail tests
+│       └── tests/                 # 77 unit, invariant, and guardrail tests
 ├── examples/
 │   └── demo-agent/                # Showcase Daydreams agent
 │       └── src/
@@ -367,11 +367,11 @@ pnpm demo:native-compat
 ## Tests
 
 ```bash
-# Run all 76 tests with Vitest
+# Run all 77 tests with Vitest
 pnpm test
 ```
 
-_Note on test integrity: All 76 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
+_Note on test integrity: All 77 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
 
 ---
 
