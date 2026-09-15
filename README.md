@@ -108,7 +108,7 @@ recipient and amount exactly as given, then report the result back to the user.
 2. **Zero On-Chain Exposure**: Because the recipient was absent from `allowedRecipients`, the call failed closed before touching an RPC, KeeperHub, or Turnkey signer. Zero gas was consumed.
 3. **Structured Corrective Feedback**: The LLM received a structured `FIREWALL_BLOCKED` message and correctly reported the failure back, rather than the transaction executing or the agent crashing.
 
-Reproduce it yourself: `pnpm demo:real-agent` (requires an `OPENROUTER_API_KEY` in `.env`; OpenRouter has $0-cost models, so this doesn't require a paid account). Because this uses a real, free-tier model, it is genuinely non-deterministic — most runs reproduce the transcript above, but a free model occasionally returns a response with no tool call at all, in which case the script prints `WARNING: Expected the firewall to block this call, but it did not` instead. That warning means the LLM didn't attempt the call that run, not that the firewall failed to block one — re-run it, or use a different `OPENROUTER_MODEL`, to get a fresh attempt.
+Reproduce it yourself: `pnpm demo:real-agent` (requires an `OPENROUTER_API_KEY` in `.env` — copy [`.env.example`](.env.example) to get started; OpenRouter has $0-cost models, so this doesn't require a paid account). Because this uses a real, free-tier model, it is genuinely non-deterministic — most runs reproduce the transcript above, but a free model occasionally returns a response with no tool call at all, in which case the script prints `WARNING: Expected the firewall to block this call, but it did not` instead. That warning means the LLM didn't attempt the call that run, not that the firewall failed to block one — re-run it, or use a different `OPENROUTER_MODEL`, to get a fresh attempt.
 
 ---
 
@@ -321,6 +321,7 @@ dreamkeeper/
 │   ├── LIMITATIONS.md             # Documented edge cases & boundaries
 │   └── THREAT_MODEL.md            # Trust assumptions & security boundaries
 ├── .github/workflows/ci.yml       # 4 separate CI jobs (lint, typecheck, test, build)
+├── .env.example                   # Every env var this repo reads; none required for tests/mock mode
 ├── pnpm-workspace.yaml            # Monorepo configuration
 ├── pnpm-lock.yaml                 # Pinned pnpm lockfile
 ├── tsconfig.base.json             # Shared strict TypeScript config
@@ -339,6 +340,10 @@ cd dreamkeeper
 
 # 2. Install pinned dependencies
 pnpm install
+
+# 2b. Optional: copy the env template if you want to try live/real-agent modes
+# (nothing below this line is needed for steps 3-6, or for pnpm test)
+cp .env.example .env
 
 # 3. Run all 4 CI verification checks
 pnpm lint
