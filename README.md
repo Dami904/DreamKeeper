@@ -3,7 +3,7 @@
 # DreamKeeper
 
 [![CI](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml/badge.svg)](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-92%20passing-22C55E?style=flat)](packages/core/tests)
+[![Tests](https://img.shields.io/badge/tests-94%20passing-22C55E?style=flat)](packages/core/tests)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Live](https://img.shields.io/badge/network-Base%20Sepolia-8A2BE2?style=flat)](https://sepolia.basescan.org)
 [![Stack](https://img.shields.io/badge/KeeperHub-MCP%20%7C%20Turnkey-orange?style=flat)](https://docs.keeperhub.com)
@@ -30,7 +30,7 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 
 | Metric                 |   Verified Value    | What This Means                                                  |
 | ---------------------- | :-----------------: | ---------------------------------------------------------------- |
-| **Test Suite**         | **92 / 92 passing** | Unit, integration, and property-based tests, zero network calls  |
+| **Test Suite**         | **94 / 94 passing** | Unit, integration, and property-based tests, zero network calls  |
 | **Secrets Needed**     |  **$0.00 / Zero**   | A cold clone verifies 100% of claims with zero API keys          |
 | **Execution States**   |    **3 States**     | `CONFIRMED`, `FAILED`, and `UNKNOWN` (with idempotent reconcile) |
 | **Simulation TTL**     |   **60 Seconds**    | Cryptographic tokens prevent execution against stale liquidity   |
@@ -325,9 +325,9 @@ This diagram depicts the simulate → invariant-check → dry-run-token → exec
 
 ## Honesty: limitations
 
-- **No Reorg-Depth Tracking.** The on-chain fallback waits for exactly 1 confirmation before marking `CONFIRMED` — there is no reorg-depth logic at any depth, in this repo or via KeeperHub's own status reporting.
+- **Confirmation Depth Is Configurable, Reorg Detection Still Isn't.** `FirewallPolicy.requiredConfirmations` (default 1, matching prior behavior) controls how many confirmations the on-chain fallback waits for before marking `CONFIRMED` — raising it narrows the reorg-exposure window, but nothing in this repo watches an already-`CONFIRMED` transaction for later eviction, at any depth, on either transport.
 - **No Cross-Chain or Multi-Step Workflows.** Every action is a single call to a single KeeperHub tool on a single chain — there's no bridge logic, no multi-step workflow concept, and no `PENDING` state (`ExecutionState` is strictly `CONFIRMED`/`FAILED`/`UNKNOWN`). Moving value across chains is out of scope entirely.
-- **In-Memory Idempotency Store Default.** The default store runs in memory. Multi-container serverless deployments should inject a persistent Redis/PostgreSQL adapter.
+- **In-Memory by Default, Opt-In File Persistence Available.** The idempotency store, circuit breaker, and Tempo hold tracking all default to in-memory, but survive a process restart when `KeeperHubClient` is constructed with `persistDir` (plain JSON files, no new dependency). Still not a database — a multi-instance or serverless deployment should inject a real database via the `IdempotencyStore` interface instead.
 - **Non-Standard Fee-on-Transfer Tokens.** Deflationary tokens with transfer taxes require explicit slippage tolerances in `expectedInvariant` to avoid false-positive invariant rejections.
 
 _See [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for full architectural disclosures._
@@ -356,7 +356,7 @@ dreamkeeper/
 │       │   ├── daydreams/         # Native Daydreams actions & extension wrapper
 │       │   ├── logger/            # Structured JSON logger (zero external dependencies)
 │       │   └── types/             # Strict TypeScript definitions & Zod schemas
-│       └── tests/                 # 92 unit, invariant, and guardrail tests
+│       └── tests/                 # 94 unit, invariant, and guardrail tests
 ├── examples/
 │   └── demo-agent/                # Showcase Daydreams agent
 │       └── src/
@@ -424,11 +424,11 @@ pnpm demo:native-compat
 ## Tests
 
 ```bash
-# Run all 92 tests with Vitest
+# Run all 94 tests with Vitest
 pnpm test
 ```
 
-_Note on test integrity: All 92 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
+_Note on test integrity: All 94 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
 
 **A separate, opt-in check against the real API.** No KeeperHub tool documents its response schema anywhere (verified — checked both `tools_documentation` and the raw JSON schema for every simulate-capable tool). That means a silent field rename on KeeperHub's side would only surface as a live bug in production, exactly like the real `gasEstimate` field-name mismatch this project hit and fixed (see above). `scripts/verify-api-contract.mjs` (`pnpm live:verify-contract`) turns that risk into a repeatable check: it calls all seven of DreamKeeper's real KeeperHub touchpoints and asserts the exact field names `LiveKeeperHubTransport` depends on are still there. It requires a real `KEEPERHUB_API_KEY`, so it isn't part of the zero-secret `pnpm test` suite — but every call it makes is a `simulate: true` request, a pure read, or a sign-and-hold immediately followed by a cancel, so it spends no gas and moves no value.
 

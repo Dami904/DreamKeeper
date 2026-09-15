@@ -17,9 +17,9 @@ This document states plainly what DreamKeeper explicitly does and does not handl
 
 ## 2. Current Architectural Limitations
 
-### A. No Reorg-Depth Tracking
+### A. No Reorg _Detection_, Only a Configurable Confirmation Depth
 
-- `OnChainKeeperHubTransport` waits for exactly **1 confirmation** (`viem`'s `confirmations: 1`) before marking a transaction `CONFIRMED` — there is no reorg-depth logic anywhere in this codebase, at any depth. A single-block reorg that evicts the transaction is not detected or rolled back automatically; the only recovery path is `keeperhub_reconcile`, which re-checks the current chain state rather than tracking reorg depth itself. On `LiveKeeperHubTransport`, finality is whatever KeeperHub's own `get_direct_execution_status` reports as `"completed"` — this repo does not independently re-verify block depth there either.
+- `FirewallPolicy.requiredConfirmations` now controls how many block confirmations `OnChainKeeperHubTransport` waits for (`viem`'s `confirmations` option) before marking a transaction `CONFIRMED` — undefined still defaults to exactly 1, matching prior behavior. Raising this narrows the window in which a reorg could evict the transaction before this code observes it as final. This is **not** reorg detection or rollback: there is still no logic anywhere in this codebase that watches an already-`CONFIRMED` transaction for later eviction, at any depth, and `keeperhub_reconcile` still just re-checks current chain state rather than tracking reorg depth itself. On `LiveKeeperHubTransport`, finality is whatever KeeperHub's own `get_direct_execution_status` reports as `"completed"` — `requiredConfirmations` has no effect there, since KeeperHub controls that path's finality criteria server-side.
 
 ### B. No Cross-Chain or Multi-Step Workflow Support
 

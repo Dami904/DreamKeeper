@@ -180,6 +180,7 @@ export class KeeperHubClient {
           privateKey: config.privateKey as `0x${string}`,
           rpcUrl: config.rpcUrl,
           maxGasPriceGwei: config.policy.maxGasPriceGwei,
+          confirmationsRequired: config.policy.requiredConfirmations,
         });
       } else {
         throw new Error(

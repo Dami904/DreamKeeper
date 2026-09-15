@@ -63,6 +63,8 @@ export interface OnChainTransportOptions {
   timeoutMs?: number | undefined;
   /** See FirewallPolicy.maxGasPriceGwei — undefined means no ceiling. */
   maxGasPriceGwei?: number | undefined;
+  /** See FirewallPolicy.requiredConfirmations — undefined defaults to 1. */
+  confirmationsRequired?: number | undefined;
 }
 
 /**
@@ -110,6 +112,7 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
   private runs = new Map<string, ExecutionResult>();
   private audits = new Map<string, AuditEntry>();
   private maxGasPriceGwei: number | undefined;
+  private confirmationsRequired: number;
 
   constructor(options: OnChainTransportOptions) {
     const clients = createClients(options);
@@ -117,6 +120,7 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
     this.publicClient = clients.publicClient;
     this.walletClient = clients.walletClient;
     this.maxGasPriceGwei = options.maxGasPriceGwei;
+    this.confirmationsRequired = options.confirmationsRequired ?? 1;
 
     const rpcUrl = options.rpcUrl || "https://sepolia.base.org";
 
@@ -323,7 +327,7 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
       // Wait for inclusion receipt
       const receipt = await this.publicClient.waitForTransactionReceipt({
         hash: txHash,
-        confirmations: 1,
+        confirmations: this.confirmationsRequired,
       });
 
       const confirmed = receipt.status === "success";
@@ -561,7 +565,7 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
 
       const receipt = await this.publicClient.waitForTransactionReceipt({
         hash: txHash,
-        confirmations: 1,
+        confirmations: this.confirmationsRequired,
       });
 
       const confirmed = receipt.status === "success";

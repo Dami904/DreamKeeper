@@ -105,6 +105,17 @@ export interface FirewallPolicy {
    * field has no effect there. Undefined means no ceiling is enforced.
    */
   maxGasPriceGwei?: number | undefined;
+  /**
+   * Number of block confirmations `OnChainKeeperHubTransport` waits for
+   * before marking a transaction `CONFIRMED`. Undefined defaults to 1,
+   * matching prior behavior. Raising this narrows the window in which a
+   * reorg could still evict an already-`CONFIRMED` transaction — it does
+   * NOT add reorg detection or rollback; nothing watches a transaction
+   * after it clears this many confirmations. Only affects the direct-signer
+   * fallback; the live KeeperHub execution path's finality is whatever
+   * `get_direct_execution_status` reports, independent of this field.
+   */
+  requiredConfirmations?: number | undefined;
 }
 
 /**

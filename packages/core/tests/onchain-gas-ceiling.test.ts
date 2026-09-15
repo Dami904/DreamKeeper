@@ -121,4 +121,86 @@ describe("Gas-price ceiling on the direct-signer (on-chain) fallback", () => {
       expect(getGasPrice).not.toHaveBeenCalled();
     });
   });
+
+  describe("OnChainKeeperHubTransport.execute confirmation depth", () => {
+    const estimateGas = vi.fn();
+    const sendTransaction = vi.fn();
+    const waitForTransactionReceipt = vi.fn();
+    const testTxHash =
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    beforeEach(() => {
+      vi.resetModules();
+      estimateGas.mockReset();
+      sendTransaction.mockReset();
+      waitForTransactionReceipt.mockReset();
+      sendTransaction.mockResolvedValue(testTxHash);
+      waitForTransactionReceipt.mockResolvedValue({ status: "success" });
+    });
+
+    it("waits for exactly 1 confirmation by default (requiredConfirmations unset)", async () => {
+      vi.doMock("viem", async (importOriginal) => {
+        const actual = await importOriginal<typeof import("viem")>();
+        return {
+          ...actual,
+          createPublicClient: () => ({
+            estimateGas,
+            waitForTransactionReceipt,
+          }),
+          createWalletClient: () => ({ sendTransaction }),
+        };
+      });
+
+      const { OnChainKeeperHubTransport } =
+        await import("../src/keeperhub/onchain-transport.js");
+      const transport = new OnChainKeeperHubTransport({
+        privateKey:
+          "0x1111111111111111111111111111111111111111111111111111111111111111" as `0x${string}`,
+      });
+
+      await transport.execute({
+        idempotencyKey: "confirmation_depth_default_key",
+        dryRunTokenId: "drt_test",
+        recipient: "0x9999999999999999999999999999999999999999",
+        amount: 1_000_000n,
+      });
+
+      expect(waitForTransactionReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({ confirmations: 1 }),
+      );
+    });
+
+    it("waits for the configured number of confirmations when requiredConfirmations is set", async () => {
+      vi.doMock("viem", async (importOriginal) => {
+        const actual = await importOriginal<typeof import("viem")>();
+        return {
+          ...actual,
+          createPublicClient: () => ({
+            estimateGas,
+            waitForTransactionReceipt,
+          }),
+          createWalletClient: () => ({ sendTransaction }),
+        };
+      });
+
+      const { OnChainKeeperHubTransport } =
+        await import("../src/keeperhub/onchain-transport.js");
+      const transport = new OnChainKeeperHubTransport({
+        privateKey:
+          "0x1111111111111111111111111111111111111111111111111111111111111111" as `0x${string}`,
+        confirmationsRequired: 5,
+      });
+
+      await transport.execute({
+        idempotencyKey: "confirmation_depth_configured_key",
+        dryRunTokenId: "drt_test",
+        recipient: "0x9999999999999999999999999999999999999999",
+        amount: 1_000_000n,
+      });
+
+      expect(waitForTransactionReceipt).toHaveBeenCalledWith(
+        expect.objectContaining({ confirmations: 5 }),
+      );
+    });
+  });
 });
