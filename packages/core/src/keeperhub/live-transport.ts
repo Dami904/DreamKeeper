@@ -330,10 +330,14 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
    * Picks execute_transfer vs execute_contract_call and builds its arguments.
    * `method` present means this is a contract-call-shaped intent (see
    * DryRunIntent's doc comment) — `recipient` becomes the contract address
-   * and `amount` becomes the native value sent with the call, in ether
-   * units (execute_contract_call's `value` is decimal-ether, unlike
-   * execute_transfer's `amount` which this codebase treats as 6-decimal
-   * USDC — see the existing amount-conversion limitation in LIMITATIONS.md).
+   * and `amount` becomes the native value sent with the call, in ether units
+   * (execute_contract_call's `value` is decimal-ether). execute_transfer's
+   * `amount` is 6-decimal when `token` is set (this codebase only ever
+   * transfers USDC as an ERC20) and 18-decimal (native ETH) when it isn't —
+   * a real bug found live: the native branch previously always divided by
+   * 1e6, so a genuine ETH transfer of 0.0009 ETH was sent to KeeperHub as
+   * "900000000" (off by 1e12), correctly rejected by KeeperHub's own
+   * balance-sufficiency check rather than silently misbehaving.
    */
   private buildTransferOrCallRequest(
     intent: {
@@ -364,12 +368,20 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
         },
       };
     }
+    // A native-ETH transfer (no token) uses 18 decimals; every ERC20 transfer
+    // in this codebase's actual usage is USDC (6 decimals) — there is no
+    // per-token decimals registry here, so an ERC20 transfer of a token
+    // other than USDC would still need this generalized. Confirmed live: a
+    // real native-ETH dry-run with the old unconditional /1e6 read our
+    // 0.0009 ETH (9e14 wei) as 900,000,000 — off by 1e12 — and KeeperHub
+    // correctly rejected it as an impossible balance requirement.
+    const decimals = intent.token ? 1e6 : 1e18;
     return {
       toolName: "execute_transfer",
       args: {
         chain_id: this.chainId,
         to_address: intent.recipient,
-        amount: (Number(intent.amount) / 1e6).toString(),
+        amount: (Number(intent.amount) / decimals).toString(),
         ...(intent.token ? { token_address: intent.token } : {}),
         ...extra,
       },

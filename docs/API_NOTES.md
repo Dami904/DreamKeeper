@@ -31,9 +31,10 @@ There is no separate "dry-run" endpoint. `execute_transfer` is called twice with
 }
 ```
 
-- `amount` is a **human-readable decimal string** (e.g., `"1.0"` for 1 token), not an atomic-unit integer string.
+- `amount` is a **human-readable decimal string** (e.g., `"1.0"` for 1 token), not an atomic-unit integer string — always in the transferred asset's own units, not a fixed 6-decimal convention.
 - `token_address` is required for ERC-20 transfers. **Omitting it sends the native token instead** — this was a real bug in an earlier version of `live-transport.ts` that never forwarded it.
 - `idempotency_key` is only meaningful on the non-simulate call.
+- **Real bug found live, since fixed**: `buildTransferOrCallRequest()` unconditionally divided `intent.amount` (atomic-unit `bigint`) by `1e6` to build this human-readable string — correct for USDC (6 decimals), the only ERC-20 this codebase transfers, but wrong for a native-ETH transfer (18 decimals, no `token`). A real dry-run of `900_000_000_000_000n` wei (0.0009 ETH) was sent as `"900000000"` and correctly rejected by KeeperHub: `"Insufficient BASE balance. Have: 0.001, Need: 900000000.0..."` — off by exactly `1e12`. Every prior live test in this project happened to use USDC, so the native-ETH path was never previously exercised. Fixed to divide by `1e18` when `token` is unset, `1e6` when it's set.
 
 **Response shape** — this is the part that was wrong before. The result is **not** a flat JSON object. It's the standard MCP tool-response envelope:
 
