@@ -118,7 +118,7 @@ async function main() {
       `  => Explorer Link: ${execRes.explorerUrl} [MOCK MODE: Offline simulation - not broadcast to public nodes]`,
     );
     console.log(
-      `     (To broadcast live to Base Sepolia, run with: pnpm --filter @dreamkeeper/demo-agent run test:e2e -- --live)`,
+      `     (To broadcast live to Base Sepolia, run: pnpm live:e2e — test:e2e alone doesn't load .env)`,
     );
   } else {
     console.log(`  => Explorer Link: ${execRes.explorerUrl} [LIVE ON-CHAIN]`);
