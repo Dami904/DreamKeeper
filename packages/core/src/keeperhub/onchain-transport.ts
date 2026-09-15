@@ -21,6 +21,9 @@ import type {
   ExecutionResult,
   ProtocolActionIntent,
   SpendingLimits,
+  TempoCancelResult,
+  TempoHoldIntent,
+  TempoHoldResult,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
@@ -595,5 +598,52 @@ export class OnChainKeeperHubTransport implements KeeperHubTransport {
   public async getSpendingLimits(): Promise<SpendingLimits | undefined> {
     // No org-level cap concept exists outside KeeperHub's own platform.
     return undefined;
+  }
+
+  public async tempoSignAndHold(
+    intent: TempoHoldIntent,
+  ): Promise<TempoHoldResult> {
+    // Tempo's sign-and-hold custody model is a KeeperHub-account-specific
+    // concept (KeeperHub holds the signed artifact server-side) — there is
+    // no local equivalent to fall back to with a raw signer.
+    logger.warn(
+      "tempoSignAndHold has no direct on-chain fallback implementation",
+      { context: { network: intent.network } },
+    );
+    return {
+      ok: false,
+      error:
+        "Tempo holds require the real KeeperHub MCP path (KEEPERHUB_API_KEY) — there is no direct on-chain fallback for KeeperHub's custody-hold primitive.",
+      revertReason: "NOT_SUPPORTED_WITHOUT_KEEPERHUB",
+    };
+  }
+
+  public async tempoReleaseHold(
+    paymentId: string,
+    idempotencyKey?: string,
+  ): Promise<ExecutionResult> {
+    logger.warn(
+      "tempoReleaseHold has no direct on-chain fallback implementation",
+      { context: { paymentId } },
+    );
+    return {
+      state: "FAILED",
+      idempotencyKey: idempotencyKey ?? paymentId,
+      revertReason: "NOT_SUPPORTED_WITHOUT_KEEPERHUB",
+      error:
+        "Tempo holds require the real KeeperHub MCP path (KEEPERHUB_API_KEY) — there is no direct on-chain fallback.",
+    };
+  }
+
+  public async tempoCancelHold(paymentId: string): Promise<TempoCancelResult> {
+    logger.warn(
+      "tempoCancelHold has no direct on-chain fallback implementation",
+      { context: { paymentId } },
+    );
+    return {
+      ok: false,
+      error:
+        "Tempo holds require the real KeeperHub MCP path (KEEPERHUB_API_KEY) — there is no direct on-chain fallback.",
+    };
   }
 }

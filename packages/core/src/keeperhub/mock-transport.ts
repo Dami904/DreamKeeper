@@ -10,6 +10,9 @@ import type {
   ExecutionResult,
   ProtocolActionIntent,
   SpendingLimits,
+  TempoCancelResult,
+  TempoHoldIntent,
+  TempoHoldResult,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { ExecutionStateMachine } from "./state-machine.js";
@@ -32,6 +35,10 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
   private runs = new Map<string, ExecutionResult>();
   private audits = new Map<string, AuditEntry>();
   private pendingReconciliations = new Map<string, ExecutionResult>();
+  private tempoHolds = new Map<
+    string,
+    { recipient: string; amount: string; network: string; tokenAddress: string }
+  >();
   private scenario: MockTransportScenario = {};
 
   constructor(scenario?: MockTransportScenario) {
@@ -327,5 +334,125 @@ export class MockKeeperHubTransport implements KeeperHubTransport {
       usingDefaultDailyCap: true,
       usingDefaultDailySolanaCap: true,
     };
+  }
+
+  public async tempoSignAndHold(
+    intent: TempoHoldIntent,
+  ): Promise<TempoHoldResult> {
+    if (this.scenario.simulateLatencyMs) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, this.scenario.simulateLatencyMs),
+      );
+    }
+
+    if (this.scenario.forceSimulationRevert) {
+      const reason =
+        this.scenario.simulationRevertReason || "TEMPO_HOLD_REJECTED";
+      return {
+        ok: false,
+        error: `Hold rejected: ${reason}`,
+        revertReason: reason,
+      };
+    }
+
+    const paymentId = `tempo_pay_${randomUUID().slice(0, 12)}`;
+    this.tempoHolds.set(paymentId, {
+      recipient: intent.recipient,
+      amount: intent.amount,
+      network: intent.network,
+      tokenAddress: intent.tokenAddress,
+    });
+
+    return {
+      ok: true,
+      paymentId,
+      precomputedHash: `0x${randomBytes(32).toString("hex")}`,
+      from: "0xMockKeeperHubWallet00000000000000000000",
+      to: intent.recipient,
+      amount: intent.amount,
+      memo: intent.memo,
+      broadcastMode: intent.broadcastMode ?? "manual",
+      broadcastAt: intent.broadcastAt,
+      validBefore: Math.floor(Date.now() / 1000) + 3600,
+      status: "pending",
+      chainId: 42431,
+    };
+  }
+
+  public async tempoReleaseHold(
+    paymentId: string,
+    idempotencyKey?: string,
+  ): Promise<ExecutionResult> {
+    const key = idempotencyKey ?? paymentId;
+    const existing = this.runs.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const hold = this.tempoHolds.get(paymentId);
+    if (!hold) {
+      return {
+        state: "FAILED",
+        idempotencyKey: key,
+        error: `No held Tempo payment found matching paymentId '${paymentId}'.`,
+        revertReason: "TEMPO_PAYMENT_ID_UNKNOWN",
+      };
+    }
+
+    if (this.scenario.simulateLatencyMs) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, this.scenario.simulateLatencyMs),
+      );
+    }
+
+    if (this.scenario.forceExecutionTimeout) {
+      const unknownResult: ExecutionResult = {
+        state: "UNKNOWN",
+        idempotencyKey: key,
+        error:
+          "Network timeout or dropped connection: Operation timed out without server acknowledgment.",
+      };
+      this.runs.set(key, unknownResult);
+      return unknownResult;
+    }
+
+    if (this.scenario.forceExecutionRevert) {
+      const revertReason =
+        this.scenario.executionRevertReason || "TEMPO_RELEASE_REVERTED";
+      const failedResult: ExecutionResult = {
+        state: "FAILED",
+        idempotencyKey: key,
+        revertReason,
+        error: `Tempo release failed: ${revertReason}`,
+      };
+      this.runs.set(key, failedResult);
+      return failedResult;
+    }
+
+    const txHash = `0x${randomBytes(32).toString("hex")}`;
+    const confirmedResult: ExecutionResult = {
+      state: "CONFIRMED",
+      idempotencyKey: key,
+      txHash,
+      explorerUrl: `https://explore.testnet.tempo.xyz/tx/${txHash}`,
+      confirmedAt: Date.now(),
+    };
+
+    this.runs.set(key, confirmedResult);
+    this.tempoHolds.delete(paymentId);
+    return confirmedResult;
+  }
+
+  public async tempoCancelHold(paymentId: string): Promise<TempoCancelResult> {
+    const hold = this.tempoHolds.get(paymentId);
+    if (!hold) {
+      return {
+        ok: false,
+        error: `No held Tempo payment found matching paymentId '${paymentId}'.`,
+      };
+    }
+
+    this.tempoHolds.delete(paymentId);
+    return { ok: true, status: "canceled" };
   }
 }

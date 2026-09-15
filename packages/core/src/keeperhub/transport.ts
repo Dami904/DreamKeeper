@@ -8,6 +8,9 @@ import type {
   ExecutionResult,
   ProtocolActionIntent,
   SpendingLimits,
+  TempoCancelResult,
+  TempoHoldIntent,
+  TempoHoldResult,
 } from "../types/index.js";
 
 export interface KeeperHubTransport {
@@ -60,4 +63,25 @@ export interface KeeperHubTransport {
    * transports have no such concept and return a static "no cap" shape.
    */
   getSpendingLimits(): Promise<SpendingLimits | undefined>;
+
+  /**
+   * Signs a Tempo stablecoin payment and holds it for later broadcast.
+   * Produces a real (but unbroadcast) signed artifact — analogous to
+   * dryRun(), but on KeeperHub's own Tempo network rather than a simulation.
+   */
+  tempoSignAndHold(intent: TempoHoldIntent): Promise<TempoHoldResult>;
+
+  /**
+   * Broadcasts a previously-created Tempo hold. This is the value-moving
+   * step, analogous to execute().
+   */
+  tempoReleaseHold(
+    paymentId: string,
+    idempotencyKey?: string,
+  ): Promise<ExecutionResult>;
+
+  /**
+   * Cancels a previously-created Tempo hold so it is never broadcast.
+   */
+  tempoCancelHold(paymentId: string): Promise<TempoCancelResult>;
 }

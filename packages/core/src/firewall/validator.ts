@@ -5,6 +5,7 @@ import type {
   DryRunToken,
   ExecutionIntent,
   FirewallPolicy,
+  TempoHoldIntent,
 } from "../types/index.js";
 import { StructuredLogger } from "../logger/index.js";
 
@@ -24,7 +25,12 @@ export interface ValidationFailure {
     | "DRY_RUN_REQUIRED"
     | "DRY_RUN_TOKEN_EXPIRED"
     | "DRY_RUN_INTENT_MISMATCH"
-    | "PROTOCOL_ACTION_NOT_ALLOWED";
+    | "PROTOCOL_ACTION_NOT_ALLOWED"
+    | "TEMPO_NETWORK_NOT_ALLOWED"
+    | "TEMPO_TOKEN_NOT_ALLOWED"
+    | "TEMPO_AMOUNT_EXCEEDS_HOLD_CAP"
+    | "TEMPO_AMOUNT_EXCEEDS_DAILY_LIMIT"
+    | "TEMPO_PAYMENT_ID_UNKNOWN";
   message: string;
   details?: Record<string, unknown>;
 }
@@ -33,6 +39,11 @@ export type ValidationResult = ValidationSuccess | ValidationFailure;
 
 interface DailySpendEntry {
   amount: bigint;
+  timestamp: number;
+}
+
+interface TempoDailySpendEntry {
+  amount: number;
   timestamp: number;
 }
 
@@ -95,6 +106,7 @@ export function computeCheckAndExecuteIntentHash(
 export class FirewallValidator {
   private policy: FirewallPolicy;
   private spendHistory: DailySpendEntry[] = [];
+  private tempoSpendHistory: TempoDailySpendEntry[] = [];
   private readonly defaultTtlMs = 60_000; // 60s TTL on dry-run tokens
 
   constructor(policy: FirewallPolicy) {
@@ -308,6 +320,133 @@ export class FirewallValidator {
   }
 
   /**
+   * Validates a Tempo sign-and-hold intent. Recipient reuses the same
+   * allowedRecipients whitelist as the EVM path — a rogue address should be
+   * blocked regardless of which KeeperHub tool tries to pay it. Network,
+   * token, and amount caps are default-deny even when unconfigured, the same
+   * posture as validateProtocolAction: there is no simulate/dry-run mode for
+   * the network/token choice itself, and this is a brand-new value system
+   * with no "unlimited by default" precedent in this codebase.
+   */
+  public validateTempoHold(intent: TempoHoldIntent): ValidationResult {
+    const normalizedRecipient = intent.recipient.toLowerCase();
+    const allowedRecipients = this.policy.allowedRecipients.map((r) =>
+      r.toLowerCase(),
+    );
+    if (!allowedRecipients.includes(normalizedRecipient)) {
+      logger.warn("Firewall blocked Tempo hold: Recipient not whitelisted", {
+        context: { recipient: intent.recipient, allowed: allowedRecipients },
+      });
+      return {
+        valid: false,
+        reason: "RECIPIENT_NOT_WHITELISTED",
+        message: `Recipient ${intent.recipient} is not on the approved address whitelist.`,
+        details: { recipient: intent.recipient },
+      };
+    }
+
+    const allowedNetworks = this.policy.allowedTempoNetworks ?? [];
+    if (!allowedNetworks.includes(intent.network)) {
+      logger.warn("Firewall blocked Tempo hold: network not whitelisted", {
+        context: { network: intent.network, allowed: allowedNetworks },
+      });
+      return {
+        valid: false,
+        reason: "TEMPO_NETWORK_NOT_ALLOWED",
+        message: `Tempo network '${intent.network}' is not on the approved network whitelist.`,
+        details: { network: intent.network },
+      };
+    }
+
+    const allowedTokens = (this.policy.allowedTempoTokens ?? []).map((t) =>
+      t.toLowerCase(),
+    );
+    if (!allowedTokens.includes(intent.tokenAddress.toLowerCase())) {
+      logger.warn("Firewall blocked Tempo hold: token not whitelisted", {
+        context: { tokenAddress: intent.tokenAddress, allowed: allowedTokens },
+      });
+      return {
+        valid: false,
+        reason: "TEMPO_TOKEN_NOT_ALLOWED",
+        message: `Tempo token '${intent.tokenAddress}' is not on the approved token whitelist.`,
+        details: { tokenAddress: intent.tokenAddress },
+      };
+    }
+
+    const amount = Number.parseFloat(intent.amount);
+    const maxPerHold = this.policy.maxTempoAmountPerHold;
+    if (maxPerHold === undefined || amount > maxPerHold) {
+      logger.warn("Firewall blocked Tempo hold: amount exceeds per-hold cap", {
+        context: { requestedAmount: amount, maxAllowed: maxPerHold },
+      });
+      return {
+        valid: false,
+        reason: "TEMPO_AMOUNT_EXCEEDS_HOLD_CAP",
+        message:
+          maxPerHold === undefined
+            ? "No maxTempoAmountPerHold is configured, so no Tempo hold is approved."
+            : `Hold amount ${amount} exceeds maximum allowed per hold (${maxPerHold}).`,
+        details: { requested: amount, max: maxPerHold },
+      };
+    }
+
+    const currentTempo24hSpend = this.getRollingTempo24hSpend();
+    const maxDaily = this.policy.maxTempoCumulativeDailySpend;
+    if (maxDaily === undefined || currentTempo24hSpend + amount > maxDaily) {
+      logger.warn(
+        "Firewall blocked Tempo hold: exceeds 24h daily velocity limit",
+        {
+          context: {
+            current24hSpend: currentTempo24hSpend,
+            requested: amount,
+            dailyLimit: maxDaily,
+          },
+        },
+      );
+      return {
+        valid: false,
+        reason: "TEMPO_AMOUNT_EXCEEDS_DAILY_LIMIT",
+        message:
+          maxDaily === undefined
+            ? "No maxTempoCumulativeDailySpend is configured, so no Tempo hold is approved."
+            : `Hold would cause 24h Tempo spend (${currentTempo24hSpend + amount}) to exceed daily limit (${maxDaily}).`,
+        details: { currentSpend: currentTempo24hSpend, limit: maxDaily },
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Records a confirmed Tempo spend (called only once a hold is actually
+   * released/broadcast, mirroring recordSpend()'s CONFIRMED-only timing).
+   */
+  public recordTempoSpend(
+    amount: number,
+    timestamp: number = Date.now(),
+  ): void {
+    this.tempoSpendHistory.push({ amount, timestamp });
+    this.pruneOldTempoSpend();
+  }
+
+  /**
+   * Calculates total Tempo spend within the past 24 hours
+   */
+  public getRollingTempo24hSpend(now: number = Date.now()): number {
+    const cutoff = now - 24 * 60 * 60 * 1000;
+    return this.tempoSpendHistory
+      .filter((entry) => entry.timestamp >= cutoff)
+      .reduce((sum, entry) => sum + entry.amount, 0);
+  }
+
+  private pruneOldTempoSpend(now: number = Date.now()): void {
+    const cutoff = now - 24 * 60 * 60 * 1000;
+    this.tempoSpendHistory = this.tempoSpendHistory.filter(
+      (entry) => entry.timestamp >= cutoff,
+    );
+  }
+
+  /**
    * Records a confirmed spend to update daily rolling velocity
    */
   public recordSpend(amount: bigint, timestamp: number = Date.now()): void {
@@ -334,5 +473,6 @@ export class FirewallValidator {
 
   public resetSpendHistory(): void {
     this.spendHistory = [];
+    this.tempoSpendHistory = [];
   }
 }

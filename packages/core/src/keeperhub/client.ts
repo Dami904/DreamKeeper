@@ -10,6 +10,9 @@ import type {
   KeeperHubConfig,
   ProtocolActionIntent,
   SpendingLimits,
+  TempoCancelResult,
+  TempoHoldIntent,
+  TempoHoldResult,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { MockKeeperHubTransport } from "./mock-transport.js";
@@ -38,6 +41,14 @@ export class KeeperHubClient {
 
   // Cache active approved dry-run tokens by tokenId
   private activeDryRunTokens = new Map<string, DryRunToken>();
+
+  // Tracks Tempo holds this client created, keyed by paymentId — guards
+  // against release/cancel being called with a hallucinated or adversarial
+  // paymentId that happens to belong to a real org-owned hold.
+  private activeTempoHolds = new Map<
+    string,
+    { recipient: string; amount: number; network: string; tokenAddress: string }
+  >();
 
   constructor(
     config: KeeperHubConfig,
@@ -324,6 +335,161 @@ export class KeeperHubClient {
    */
   public async getSpendingLimits(): Promise<SpendingLimits | undefined> {
     return this.transport.getSpendingLimits();
+  }
+
+  /**
+   * Signs a Tempo stablecoin payment and holds it for later broadcast — the
+   * "dry-run" step of this lifecycle: it produces a real signed artifact,
+   * but nothing broadcasts until tempoReleaseHold() is called. On success,
+   * the returned paymentId is tracked so a later release/cancel call can be
+   * verified against a hold this client actually created.
+   */
+  public async tempoSignAndHold(
+    intent: TempoHoldIntent,
+  ): Promise<TempoHoldResult> {
+    logger.info("Evaluating Tempo sign-and-hold intent", {
+      idempotencyKey: intent.idempotencyKey,
+      context: { network: intent.network, recipient: intent.recipient },
+    });
+
+    if (!this.circuitBreaker.isExecutionAllowed()) {
+      return {
+        ok: false,
+        error:
+          "CIRCUIT_BREAKER_OPEN: All outbound writes are temporarily halted due to repeated failures.",
+      };
+    }
+
+    const validation = this.firewall.validateTempoHold(intent);
+    if (!validation.valid) {
+      logger.warn("Tempo sign-and-hold blocked by Firewall", {
+        context: { reason: validation.reason },
+      });
+      return {
+        ok: false,
+        revertReason: validation.reason,
+        error: `FIREWALL_BLOCKED: ${validation.message}`,
+      };
+    }
+
+    const result = await this.transport.tempoSignAndHold(intent);
+
+    if (!result.ok) {
+      this.circuitBreaker.recordFailure(result.revertReason || result.error);
+      return result;
+    }
+
+    if (result.paymentId) {
+      this.activeTempoHolds.set(result.paymentId, {
+        recipient: intent.recipient,
+        amount: Number.parseFloat(intent.amount),
+        network: intent.network,
+        tokenAddress: intent.tokenAddress,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Broadcasts a previously-created Tempo hold — the value-moving step,
+   * analogous to execute(). Refuses to act on any paymentId this client did
+   * not itself create via tempoSignAndHold(), regardless of whether
+   * KeeperHub would otherwise honor it, since an LLM could otherwise be fed
+   * or hallucinate an arbitrary org-owned paymentId.
+   */
+  public async tempoReleaseHold(
+    paymentId: string,
+    idempotencyKey?: string,
+  ): Promise<ExecutionResult> {
+    const key = idempotencyKey ?? `tempo_release_${paymentId}`;
+    logger.info("Received Tempo release request", {
+      idempotencyKey: key,
+      context: { paymentId },
+    });
+
+    if (!this.circuitBreaker.isExecutionAllowed()) {
+      return {
+        state: "FAILED",
+        idempotencyKey: key,
+        error: "CIRCUIT_BREAKER_OPEN: Outbound execution is locked.",
+      };
+    }
+
+    const existing = this.idempotencyStore.get(key);
+    if (existing && existing.result) {
+      logger.info("Returning cached idempotency result", {
+        idempotencyKey: key,
+      });
+      return existing.result;
+    }
+
+    const tracked = this.activeTempoHolds.get(paymentId);
+    if (!tracked) {
+      logger.warn("Tempo release blocked: unknown paymentId", {
+        context: { paymentId },
+      });
+      return {
+        state: "FAILED",
+        idempotencyKey: key,
+        error: `FIREWALL_BLOCKED: paymentId '${paymentId}' was not created by this client.`,
+        revertReason: "TEMPO_PAYMENT_ID_UNKNOWN",
+      };
+    }
+
+    this.idempotencyStore.savePreRequest({
+      key,
+      recipient: tracked.recipient,
+      amount: tracked.amount.toString(),
+      actionPayloadHash: JSON.stringify({
+        paymentId,
+        network: tracked.network,
+      }),
+      state: "UNKNOWN",
+    });
+
+    const result = await this.transport.tempoReleaseHold(paymentId, key);
+
+    this.idempotencyStore.updateState(key, result.state, result);
+
+    if (result.state === "CONFIRMED") {
+      this.circuitBreaker.recordSuccess();
+      this.firewall.recordTempoSpend(tracked.amount);
+      this.activeTempoHolds.delete(paymentId);
+    } else if (result.state === "FAILED") {
+      this.circuitBreaker.recordFailure(result.revertReason || result.error);
+    } else if (result.state === "UNKNOWN") {
+      this.circuitBreaker.recordUnknown(result.error);
+    }
+
+    return result;
+  }
+
+  /**
+   * Cancels a previously-created Tempo hold so it is never broadcast. Same
+   * unknown-paymentId guard as tempoReleaseHold(); no spend/circuit-breaker
+   * impact since nothing was ever broadcast.
+   */
+  public async tempoCancelHold(paymentId: string): Promise<TempoCancelResult> {
+    logger.info("Received Tempo cancel request", { context: { paymentId } });
+
+    const tracked = this.activeTempoHolds.get(paymentId);
+    if (!tracked) {
+      logger.warn("Tempo cancel blocked: unknown paymentId", {
+        context: { paymentId },
+      });
+      return {
+        ok: false,
+        error: `FIREWALL_BLOCKED: paymentId '${paymentId}' was not created by this client.`,
+      };
+    }
+
+    const result = await this.transport.tempoCancelHold(paymentId);
+    if (result.ok) {
+      this.activeTempoHolds.delete(paymentId);
+    }
+
+    return result;
   }
 
   /**

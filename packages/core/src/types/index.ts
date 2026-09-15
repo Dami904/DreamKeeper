@@ -60,6 +60,29 @@ export interface FirewallPolicy {
    * to catch a bad call before it signs and broadcasts.
    */
   allowedProtocolActions?: string[] | undefined;
+  /**
+   * Default-deny whitelist of Tempo network strings (e.g. "tempo-testnet")
+   * that keeperhub_tempo_sign_and_hold is allowed to target. Independent of
+   * `network` above, which scopes only the primary EVM transfer/contract-call
+   * path — a policy can allow Tempo holds alongside an unrelated EVM network.
+   */
+  allowedTempoNetworks?: string[] | undefined;
+  /** Default-deny whitelist of Tempo stablecoin contract addresses (lowercase 0x...) */
+  allowedTempoTokens?: string[] | undefined;
+  /**
+   * Maximum decimal amount (in the held token's own human-readable units,
+   * e.g. "25.5" pathUSD) allowed per single Tempo hold. Default-deny if
+   * unset — unlike maxAmountPerTx, there is no existing "unlimited by
+   * default" precedent for this brand-new value system.
+   */
+  maxTempoAmountPerHold?: number | undefined;
+  /**
+   * Maximum cumulative decimal amount allowed across Tempo holds within a
+   * 24-hour rolling window. Tracked separately from maxCumulativeDailySpend
+   * because Tempo amounts are decimal strings in the held token's own units,
+   * not atomic bigint units of a single EVM policy token.
+   */
+  maxTempoCumulativeDailySpend?: number | undefined;
 }
 
 /**
@@ -194,6 +217,56 @@ export interface SpendingLimits {
   effectiveDailySolanaCapLamports: bigint;
   usingDefaultDailyCap: boolean;
   usingDefaultDailySolanaCap: boolean;
+}
+
+/**
+ * A request to sign a Tempo stablecoin payment and hold it for later
+ * broadcast (keeperhub_tempo_sign_and_hold). `amount` is a human-readable
+ * decimal string in the token's own units (e.g. "1.50"), not atomic bigint
+ * units — Tempo's tools take decimal amounts directly, unlike the EVM
+ * transfer/contract-call path elsewhere in this repo.
+ */
+export interface TempoHoldIntent {
+  idempotencyKey: string;
+  /** Tempo network string, e.g. "tempo-testnet" — validated against FirewallPolicy.allowedTempoNetworks */
+  network: string;
+  tokenAddress: string;
+  tokenSymbol: string;
+  amount: string;
+  recipient: string;
+  memo?: string | undefined;
+  broadcastMode?: "manual" | "schedule" | undefined;
+  broadcastAt?: string | undefined;
+  validBefore?: string | undefined;
+}
+
+/**
+ * Result of a sign-and-hold call. Distinct from ExecutionResult's 3-state
+ * model because nothing has broadcast yet — `paymentId` is the handle used
+ * later with keeperhub_tempo_release_hold/keeperhub_tempo_cancel_hold.
+ */
+export interface TempoHoldResult {
+  ok: boolean;
+  paymentId?: string | undefined;
+  precomputedHash?: string | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
+  amount?: string | undefined;
+  memo?: string | undefined;
+  broadcastMode?: string | undefined;
+  broadcastAt?: string | undefined;
+  validBefore?: number | undefined;
+  status?: string | undefined;
+  chainId?: number | undefined;
+  error?: string | undefined;
+  revertReason?: string | undefined;
+}
+
+/** Result of a cancel call — nothing broadcasts, so no 3-state model applies. */
+export interface TempoCancelResult {
+  ok: boolean;
+  status?: string | undefined;
+  error?: string | undefined;
 }
 
 /**
@@ -358,3 +431,45 @@ export const AuditActionSchema = z.object({
 });
 
 export const GetSpendingLimitsActionSchema = z.object({});
+
+export const TempoSignAndHoldActionSchema = z.object({
+  idempotencyKey: z
+    .string()
+    .min(8, "Idempotency key must be at least 8 characters"),
+  network: z.string().describe('Tempo network, e.g. "tempo-testnet"'),
+  tokenAddress: z
+    .string()
+    .describe(
+      "Tempo stablecoin contract address, e.g. pathUSD's 0x20c0...0000",
+    ),
+  tokenSymbol: z.string().describe('Token symbol, e.g. "pathUSD"'),
+  amount: z
+    .string()
+    .describe(
+      'Human-readable decimal amount in the token\'s own units, e.g. "1.50"',
+    ),
+  recipient: z.string().describe("Recipient address"),
+  memo: z.string().optional(),
+  broadcastMode: z.enum(["manual", "schedule"]).optional(),
+  broadcastAt: z.string().optional(),
+  validBefore: z.string().optional(),
+});
+
+export const TempoReleaseHoldActionSchema = z.object({
+  paymentId: z
+    .string()
+    .min(
+      1,
+      "paymentId is required from a previous keeperhub_tempo_sign_and_hold call",
+    ),
+  idempotencyKey: z.string().min(8).optional(),
+});
+
+export const TempoCancelHoldActionSchema = z.object({
+  paymentId: z
+    .string()
+    .min(
+      1,
+      "paymentId is required from a previous keeperhub_tempo_sign_and_hold call",
+    ),
+});

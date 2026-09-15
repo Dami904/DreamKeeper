@@ -11,6 +11,9 @@ import type {
   ProtocolActionIntent,
   SpendingLimits,
   SupportedNetwork,
+  TempoCancelResult,
+  TempoHoldIntent,
+  TempoHoldResult,
 } from "../types/index.js";
 import type { KeeperHubTransport } from "./transport.js";
 import { InvariantEvaluator } from "../firewall/invariants.js";
@@ -1359,5 +1362,229 @@ export class LiveKeeperHubTransport implements KeeperHubTransport {
       );
       return undefined;
     }
+  }
+
+  /**
+   * Signs a Tempo stablecoin payment and holds it for later broadcast.
+   * Verified real response on success:
+   * `{success:true, paymentId, precomputedHash, from, to, amount, memo,
+   * broadcastMode, broadcastAt, validBefore, status:"pending", chainId}`.
+   * Real errors observed are a flat `{"error": "..."}` (e.g. an unsupported
+   * network string, or a malformed tokenConfig) — tokenConfig must be sent
+   * as a JSON-stringified `{"mode":"custom","customToken":{"address":...,
+   * "symbol":...}}`, not a bare token symbol string.
+   */
+  public async tempoSignAndHold(
+    intent: TempoHoldIntent,
+  ): Promise<TempoHoldResult> {
+    logger.info("Signing and holding Tempo payment", {
+      idempotencyKey: intent.idempotencyKey,
+      context: { network: intent.network, recipient: intent.recipient },
+    });
+
+    const tokenConfig = JSON.stringify({
+      mode: "custom",
+      customToken: { address: intent.tokenAddress, symbol: intent.tokenSymbol },
+    });
+
+    const call = await this.callTool("tempo_sign_and_hold", {
+      network: intent.network,
+      tokenConfig,
+      amount: intent.amount,
+      recipientAddress: intent.recipient,
+      memo: intent.memo,
+      broadcastMode: intent.broadcastMode,
+      broadcastAt: intent.broadcastAt,
+      validBefore: intent.validBefore,
+      idempotency_key: intent.idempotencyKey,
+    });
+
+    if (this.isAuthError(call)) {
+      logger.error("KeeperHub tempo_sign_and_hold auth failure", {
+        idempotencyKey: intent.idempotencyKey,
+      });
+      return { ok: false, error: this.authErrorMessage() };
+    }
+
+    if (call.timedOut || call.error || call.rpcError) {
+      logger.error("KeeperHub tempo_sign_and_hold network/RPC failure", {
+        idempotencyKey: intent.idempotencyKey,
+        context: {
+          status: call.status,
+          error: call.error?.message,
+          rpcError: call.rpcError,
+        },
+      });
+      return {
+        ok: false,
+        error:
+          call.rpcError?.message ||
+          call.error?.message ||
+          "Network timeout awaiting KeeperHub tempo_sign_and_hold response.",
+      };
+    }
+
+    const p = call.parsed;
+    if (call.isToolError || !p || p.success === false || p.error) {
+      logger.warn("KeeperHub tempo_sign_and_hold rejected the request", {
+        idempotencyKey: intent.idempotencyKey,
+        context: { rawText: call.text },
+      });
+      return {
+        ok: false,
+        error: p?.error || call.text || "KeeperHub tempo_sign_and_hold failed.",
+      };
+    }
+
+    return {
+      ok: true,
+      paymentId: p.paymentId,
+      precomputedHash: p.precomputedHash,
+      from: p.from,
+      to: p.to,
+      amount: p.amount,
+      memo: p.memo,
+      broadcastMode: p.broadcastMode,
+      broadcastAt: p.broadcastAt ?? undefined,
+      validBefore: p.validBefore,
+      status: p.status,
+      chainId: p.chainId,
+    };
+  }
+
+  /**
+   * Broadcasts a previously-created Tempo hold. Verified real success shape:
+   * `{ok:true, status:"confirmed", transactionHash}` — synchronous, unlike
+   * the execution_id/poll pattern used by the EVM direct-execution tools.
+   */
+  public async tempoReleaseHold(
+    paymentId: string,
+    idempotencyKey?: string,
+  ): Promise<ExecutionResult> {
+    const key = idempotencyKey ?? paymentId;
+    logger.info("Releasing Tempo hold", {
+      idempotencyKey: key,
+      context: { paymentId },
+    });
+
+    const call = await this.callTool("tempo_release_hold", {
+      paymentId,
+      idempotency_key: key,
+    });
+
+    if (this.isAuthError(call)) {
+      logger.error("KeeperHub tempo_release_hold auth failure", {
+        idempotencyKey: key,
+      });
+      return {
+        state: "FAILED",
+        idempotencyKey: key,
+        error: this.authErrorMessage(),
+      };
+    }
+
+    if (call.timedOut || call.error || call.rpcError) {
+      logger.error("KeeperHub tempo_release_hold network/RPC failure", {
+        idempotencyKey: key,
+        context: {
+          status: call.status,
+          error: call.error?.message,
+          rpcError: call.rpcError,
+        },
+      });
+      return {
+        state: "UNKNOWN",
+        idempotencyKey: key,
+        error:
+          call.rpcError?.message ||
+          call.error?.message ||
+          "Network timeout awaiting KeeperHub tempo_release_hold response.",
+      };
+    }
+
+    const p = call.parsed;
+    if (call.isToolError || !p || p.ok === false || p.error) {
+      logger.warn("KeeperHub tempo_release_hold rejected the request", {
+        idempotencyKey: key,
+        context: { rawText: call.text },
+      });
+      return {
+        state: "FAILED",
+        idempotencyKey: key,
+        revertReason: p?.error || "TEMPO_RELEASE_FAILED",
+        error: p?.error || call.text || "KeeperHub tempo_release_hold failed.",
+      };
+    }
+
+    if (!p.transactionHash) {
+      logger.warn(
+        "KeeperHub tempo_release_hold response had no transactionHash",
+        {
+          idempotencyKey: key,
+          context: { rawText: call.text },
+        },
+      );
+      return {
+        state: "UNKNOWN",
+        idempotencyKey: key,
+        error: "KeeperHub reported success but returned no transactionHash.",
+      };
+    }
+
+    return {
+      state: "CONFIRMED",
+      idempotencyKey: key,
+      txHash: p.transactionHash,
+      explorerUrl: `https://explore.testnet.tempo.xyz/tx/${p.transactionHash}`,
+      confirmedAt: Date.now(),
+    };
+  }
+
+  /**
+   * Cancels a previously-created Tempo hold. Verified real success shape:
+   * `{ok:true, status:"canceled"}`.
+   */
+  public async tempoCancelHold(paymentId: string): Promise<TempoCancelResult> {
+    logger.info("Canceling Tempo hold", { context: { paymentId } });
+
+    const call = await this.callTool("tempo_cancel_hold", { paymentId });
+
+    if (this.isAuthError(call)) {
+      logger.error("KeeperHub tempo_cancel_hold auth failure", {
+        context: { paymentId },
+      });
+      return { ok: false, error: this.authErrorMessage() };
+    }
+
+    if (call.timedOut || call.error || call.rpcError) {
+      logger.error("KeeperHub tempo_cancel_hold network/RPC failure", {
+        context: {
+          paymentId,
+          status: call.status,
+          error: call.error?.message,
+          rpcError: call.rpcError,
+        },
+      });
+      return {
+        ok: false,
+        error:
+          call.rpcError?.message ||
+          call.error?.message ||
+          "Network timeout awaiting KeeperHub tempo_cancel_hold response.",
+      };
+    }
+
+    const p = call.parsed;
+    if (call.isToolError || !p || p.ok === false || p.error) {
+      logger.warn("KeeperHub tempo_cancel_hold rejected the request", {
+        context: { paymentId, rawText: call.text },
+      });
+      return {
+        ok: false,
+        error: p?.error || call.text || "KeeperHub tempo_cancel_hold failed.",
+      };
+    }
+
+    return { ok: true, status: p.status ?? "canceled" };
   }
 }
