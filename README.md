@@ -41,6 +41,7 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 git clone https://github.com/Dami904/dreamkeeper.git && cd dreamkeeper
 pnpm install
 pnpm test
+pnpm build   # required once — demo-agent imports @dreamkeeper/core's built dist/
 pnpm --filter @dreamkeeper/demo-agent run start
 ```
 
