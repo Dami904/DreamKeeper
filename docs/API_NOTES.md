@@ -102,6 +102,50 @@ Verified directly against the real tool with a fully-scoped API key. Response (`
 
 `dailyCapWei`/`dailySolanaCapLamports` are `null` when the organization hasn't set its own explicit cap — `effectiveDailyCapWei`/`effectiveDailySolanaCapLamports` are what's actually enforced in that case (a KeeperHub-side default; here `0.02 ETH` and `0.5 SOL`), and `usingDefaultDailyCap`/`usingDefaultDailySolanaCap` are `true` to indicate the effective value came from the default rather than an org-configured one. Takes no parameters. Our session's own OAuth-scoped `mcp__keeperhub__*` tools returned 401 for this call (evidently a privileged/write-scoped tool despite being read-only); DreamKeeper's own `.env` `KEEPERHUB_API_KEY` has the required scope.
 
+### `tempo_sign_and_hold` / `tempo_release_hold` / `tempo_cancel_hold` — a second network, real value moved and independently verified
+
+KeeperHub also exposes a Tempo network (a stablecoin-payments EVM chain — `tempo-testnet` chainId `42431`, `tempo-mainnet` chainId `4217`, both `status: "stable"` per `list_action_schemas`). Its own `tempo/*` `execute_protocol_action` entries (`transfer-with-memo`, `batch-payout`, `dex-swap`, `hold-payment`) are **all workflow-only** — every one returned `501 Not Implemented` when called directly, the same class of restriction documented above for `execute_protocol_action`. But the **standalone** `tempo_sign_and_hold`/`tempo_release_hold`/`tempo_cancel_hold` tools are directly executable outside the workflow system, and DreamKeeper integrates them directly (not through `execute_protocol_action`).
+
+Verified real response shapes, using DreamKeeper's own `.env` `KEEPERHUB_API_KEY` (session-scoped `mcp:read mcp:write mcp:admin`) and free testnet funds from Tempo's public faucet (`POST https://tempo.xyz/developers/api/faucet` with `{"address": "<wallet>"}`, distributing pathUSD/AlphaUSD/BetaUSD/ThetaUSD test stablecoins at `0x20c0...0000`–`...0003`):
+
+`tempo_sign_and_hold` success:
+
+```json
+{
+  "success": true,
+  "paymentId": "7dmo4g9y1a0x3sj2ynx01",
+  "precomputedHash": "0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190",
+  "from": "0x9219AB851CD5Fea9Bf65B9ABF0De929315185D76",
+  "to": "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF",
+  "amount": "1",
+  "memo": "0x...",
+  "broadcastMode": "manual",
+  "validBefore": 1789548818,
+  "status": "pending",
+  "chainId": 42431
+}
+```
+
+`tokenConfig` must be sent as a **JSON-stringified object** — `{"mode":"custom","customToken":{"address":"0x...","symbol":"..."}}` — not a bare token symbol string; passing `"USDC"` directly fails with `{"error":"A token is required"}`. `memo` is plain-text-limited to **31 bytes or fewer** (or a `0x` + 64-hex bytes32 value); a longer plain-text memo fails with `{"error":"Memo \"...\" is too long: a plain-text memo must be 31 bytes or fewer, or pass a 0x + 64-hex bytes32 value."}`. An unsupported `network` string fails with `{"error":"Unsupported network: <value>. Supported: mainnet, eth-mainnet, ..., tempo-testnet, tempo, tempo-mainnet, ..."}`.
+
+`tempo_release_hold` success (synchronous — no `execution_id`/polling, unlike the EVM direct-execution tools):
+
+```json
+{
+  "ok": true,
+  "status": "confirmed",
+  "transactionHash": "0xc17284a1bae8fbb9e89e058b73f257647ea1c69910a1e5abe819f5568c2bb190"
+}
+```
+
+`tempo_cancel_hold` success:
+
+```json
+{ "ok": true, "status": "canceled" }
+```
+
+Independently verified: the `transactionHash` above was checked directly against Tempo's public RPC (`https://rpc.moderato.tempo.xyz`, `eth_getTransactionReceipt`) — `status: "0x1"`, a real ERC20 `Transfer` event log moving 1 pathUSD from the KeeperHub wallet to the test recipient, at a real block number. Both a full hold→cancel cycle and a full hold→release cycle were run for real during development.
+
 ### Auth / error responses
 
 A bad or missing API key does **not** produce a flat `{"error": "invalid_token"}` — an earlier version of this doc and of `live-transport.ts` assumed this shape and never observed a real failure. What we've verified: an invalid/empty key still gets past `initialize` in some cases and fails later with a `"Missing or invalid API key"`-style message inside the tool response; a fully absent/malformed key can also produce an HTTP 401/403 on `initialize` itself. Treat both as auth failures.

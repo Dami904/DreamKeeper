@@ -8,6 +8,9 @@ import {
   CheckAndExecuteExecuteActionSchema,
   ProtocolActionSchema,
   GetSpendingLimitsActionSchema,
+  TempoSignAndHoldActionSchema,
+  TempoReleaseHoldActionSchema,
+  TempoCancelHoldActionSchema,
 } from "../types/index.js";
 import { StructuredLogger } from "../logger/index.js";
 
@@ -434,6 +437,134 @@ export function createDaydreamsActions(client: KeeperHubClient) {
     },
   };
 
+  const tempoSignAndHoldAction: DaydreamsActionDefinition<
+    typeof TempoSignAndHoldActionSchema,
+    any
+  > = {
+    name: "keeperhub_tempo_sign_and_hold",
+    description:
+      "Sign a Tempo stablecoin payment and hold it for later broadcast, without moving any value yet. " +
+      "Produces a real signed artifact (not just a simulation) that only becomes a live payment once " +
+      "keeperhub_tempo_release_hold is called — until then it can be safely discarded with " +
+      "keeperhub_tempo_cancel_hold. network must be an approved Tempo network (e.g. 'tempo-testnet'); " +
+      "tokenAddress/tokenSymbol identify the stablecoin; amount is a human-readable decimal string " +
+      '(e.g. "1.50"), not atomic units. Returns a paymentId required for release/cancel.',
+    schema: TempoSignAndHoldActionSchema,
+    handler: async (args) => {
+      logger.info("Executing keeperhub_tempo_sign_and_hold tool call", {
+        idempotencyKey: args.idempotencyKey,
+        context: { network: args.network, recipient: args.recipient },
+      });
+
+      const result = await client.tempoSignAndHold({
+        idempotencyKey: args.idempotencyKey,
+        network: args.network,
+        tokenAddress: args.tokenAddress,
+        tokenSymbol: args.tokenSymbol,
+        amount: args.amount,
+        recipient: args.recipient,
+        memo: args.memo,
+        broadcastMode: args.broadcastMode,
+        broadcastAt: args.broadcastAt,
+        validBefore: args.validBefore,
+      });
+
+      if (!result.ok) {
+        return {
+          status: "HOLD_FAILED",
+          error: result.error,
+          revertReason: result.revertReason,
+          suggestion:
+            "Verify the recipient, Tempo network, and token address are all whitelisted, and that the amount is within the configured caps.",
+        };
+      }
+
+      return {
+        status: "HOLD_CREATED",
+        paymentId: result.paymentId,
+        precomputedHash: result.precomputedHash,
+        validBefore: result.validBefore,
+        instructions:
+          "Hold created but not yet broadcast. Call keeperhub_tempo_release_hold with this paymentId to broadcast it, or keeperhub_tempo_cancel_hold to discard it.",
+      };
+    },
+  };
+
+  const tempoReleaseHoldAction: DaydreamsActionDefinition<
+    typeof TempoReleaseHoldActionSchema,
+    any
+  > = {
+    name: "keeperhub_tempo_release_hold",
+    description:
+      "Broadcast a previously-created Tempo hold, actually moving the held stablecoin. Requires a " +
+      "paymentId from a prior keeperhub_tempo_sign_and_hold call made by this same agent session — " +
+      "a paymentId this client did not itself create is refused, even if it belongs to a real hold.",
+    schema: TempoReleaseHoldActionSchema,
+    handler: async (args) => {
+      logger.info("Executing keeperhub_tempo_release_hold tool call", {
+        context: { paymentId: args.paymentId },
+      });
+
+      const result = await client.tempoReleaseHold(
+        args.paymentId,
+        args.idempotencyKey,
+      );
+
+      if (result.state === "CONFIRMED") {
+        return {
+          status: "CONFIRMED",
+          txHash: result.txHash,
+          explorerUrl: result.explorerUrl,
+          confirmedAt: result.confirmedAt,
+          summary: `Tempo hold successfully released and confirmed on-chain at ${result.txHash}.`,
+        };
+      }
+
+      if (result.state === "UNKNOWN") {
+        return {
+          status: "UNKNOWN",
+          idempotencyKey: result.idempotencyKey,
+          warning:
+            "Release status is currently indeterminate due to a network timeout. Do NOT retry with a new idempotencyKey.",
+        };
+      }
+
+      return {
+        status: "FAILED",
+        idempotencyKey: result.idempotencyKey,
+        error: result.error,
+        revertReason: result.revertReason,
+      };
+    },
+  };
+
+  const tempoCancelHoldAction: DaydreamsActionDefinition<
+    typeof TempoCancelHoldActionSchema,
+    any
+  > = {
+    name: "keeperhub_tempo_cancel_hold",
+    description:
+      "Cancel a previously-created Tempo hold so it is never broadcast. Same paymentId-ownership guard " +
+      "as keeperhub_tempo_release_hold.",
+    schema: TempoCancelHoldActionSchema,
+    handler: async (args) => {
+      logger.info("Executing keeperhub_tempo_cancel_hold tool call", {
+        context: { paymentId: args.paymentId },
+      });
+
+      const result = await client.tempoCancelHold(args.paymentId);
+
+      if (!result.ok) {
+        return { status: "CANCEL_FAILED", error: result.error };
+      }
+
+      return {
+        status: "CANCELED",
+        summary: `Tempo hold '${args.paymentId}' was canceled and will never broadcast.`,
+      };
+    },
+  };
+
   return {
     dryRunAction,
     executeAction,
@@ -443,5 +574,8 @@ export function createDaydreamsActions(client: KeeperHubClient) {
     checkAndExecuteAction,
     protocolActionAction,
     getSpendingLimitsAction,
+    tempoSignAndHoldAction,
+    tempoReleaseHoldAction,
+    tempoCancelHoldAction,
   };
 }

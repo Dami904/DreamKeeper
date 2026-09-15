@@ -3,7 +3,7 @@
 # DreamKeeper
 
 [![CI](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml/badge.svg)](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-64%20passing-22C55E?style=flat)](packages/core/tests)
+[![Tests](https://img.shields.io/badge/tests-76%20passing-22C55E?style=flat)](packages/core/tests)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Live](https://img.shields.io/badge/network-Base%20Sepolia-8A2BE2?style=flat)](https://sepolia.basescan.org)
 [![Stack](https://img.shields.io/badge/KeeperHub-MCP%20%7C%20Turnkey-orange?style=flat)](https://docs.keeperhub.com)
@@ -26,11 +26,11 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 
 ## Judge it in 90 seconds
 
-**Live Network: [Base Sepolia](https://sepolia.basescan.org)** — runs in `mock` mode locally for secret-free verification, or `live` mode against real KeeperHub Turnkey enclaves.
+**Live Network: [Base Sepolia](https://sepolia.basescan.org)** (plus [Tempo Testnet](https://explore.testnet.tempo.xyz) for the hold/release/cancel payment lifecycle) — runs in `mock` mode locally for secret-free verification, or `live` mode against real KeeperHub Turnkey enclaves.
 
 | Metric                 |   Verified Value    | What This Means                                                  |
 | ---------------------- | :-----------------: | ---------------------------------------------------------------- |
-| **Test Suite**         | **64 / 64 passing** | Unit, integration, and property-based tests, zero network calls  |
+| **Test Suite**         | **76 / 76 passing** | Unit, integration, and property-based tests, zero network calls  |
 | **Secrets Needed**     |  **$0.00 / Zero**   | A cold clone verifies 100% of claims with zero API keys          |
 | **Execution States**   |    **3 States**     | `CONFIRMED`, `FAILED`, and `UNKNOWN` (with idempotent reconcile) |
 | **Simulation TTL**     |   **60 Seconds**    | Cryptographic tokens prevent execution against stale liquidity   |
@@ -115,7 +115,7 @@ Giving an autonomous AI agent a private key is terrifying. If you run an agent f
 1. **The Hallucination Firewall & Policy Engine** — A local security layer enforcing default-deny address whitelists, per-transaction caps, 24-hour rolling velocity limits, and 60-second Time-To-Live simulation tokens.
 2. **The Invariant Evaluator** — A mathematical post-condition engine that verifies simulation traces in TypeScript (`maxBalanceLoss`, `minTokensReceived`, `maxGasUnits`) so LLMs never calculate financial safety themselves.
 3. **The 3-State KeeperHub Client** — A deterministic execution client that models operations as `CONFIRMED`, `FAILED`, or `UNKNOWN`, using pre-request semantic idempotency keys to eliminate duplicate payouts on network timeouts.
-4. **Daydreams Extension (`@dreamkeeper/core`)** — A native Daydreams module exposing 8 KeeperHub-backed actions (transfers, arbitrary contract calls, atomic check-and-execute, curated protocol actions, reconciliation, audit, and spending-limit reads — see [KeeperHub endpoints integrated](#keeperhub-endpoints-integrated) below).
+4. **Daydreams Extension (`@dreamkeeper/core`)** — A native Daydreams module exposing 11 KeeperHub-backed actions across **two live networks** (Base Sepolia and KeeperHub's Tempo testnet): transfers, arbitrary contract calls, atomic check-and-execute, curated protocol actions, a sign-hold-release/cancel payment lifecycle, reconciliation, audit, and spending-limit reads — see [KeeperHub endpoints integrated](#keeperhub-endpoints-integrated) below.
 
 **Daydreams provides the probabilistic reasoning, and DreamKeeper enforces deterministic execution and guardrails through KeeperHub.**
 
@@ -133,8 +133,11 @@ DreamKeeper doesn't wrap a single KeeperHub call — every write path an agent c
 | `execute_protocol_action`     | `keeperhub_protocol_action`                                                  | Broadcasts a pre-built KeeperHub DeFi protocol action (e.g. `aave-v3/supply`) by `actionType` | KeeperHub's own curated DeFi abstraction — real value movement through KeeperHub's own execution primitives, not raw plumbing DreamKeeper reimplements                                 |
 | `get_direct_execution_status` | _(internal — used by the polling loop behind the actions above)_             | Polls broadcast status until terminal                                                         | Required to resolve `CONFIRMED`/`FAILED`/`UNKNOWN` after any of the above                                                                                                              |
 | `get_spending_limits`         | `keeperhub_get_spending_limits`                                              | Reads KeeperHub's own server-side daily spending cap and current usage                        | A second, independent enforcement layer on top of DreamKeeper's local firewall — see [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md#threat-5-local-firewall-state-is-wiped-or-bypassed) |
+| `tempo_sign_and_hold`         | `keeperhub_tempo_sign_and_hold`                                              | Signs a Tempo stablecoin payment and holds it, unbroadcast, on KeeperHub's Tempo network      | A **second live network** with a real sign-now/decide-later custody primitive — a stronger fit for a "firewall decides, not the LLM" story than simulate-then-broadcast                |
+| `tempo_release_hold`          | `keeperhub_tempo_release_hold`                                               | Broadcasts a previously-created Tempo hold — the actual value-moving step                     | Independently verified on-chain: a real hold→release produced a confirmed txHash, checked directly against Tempo's RPC (`eth_getTransactionReceipt`, `status: "0x1"`)                  |
+| `tempo_cancel_hold`           | `keeperhub_tempo_cancel_hold`                                                | Cancels a previously-created Tempo hold so it never broadcasts                                | Lets the firewall/client reject a signed-but-unbroadcast payment outright, with nothing ever reaching the chain                                                                        |
 
-`execute_protocol_action` and `get_spending_limits` have no dry-run/simulate step — the former broadcasts immediately once its `actionType` passes the firewall's `allowedProtocolActions` whitelist, and the latter is a plain read.
+`execute_protocol_action`, `tempo_sign_and_hold`, and `get_spending_limits` have no dry-run/simulate step — the first two broadcast (or sign) immediately once approved by the firewall, and the last is a plain read. Every Tempo tool call is gated by its own default-deny whitelists (`allowedTempoNetworks`, `allowedTempoTokens`) and per-hold/rolling-24h decimal caps, independent of the EVM-side `FirewallPolicy` fields — see [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md#threat-6-hallucinated-or-adversarial-tempo-paymentid) for how `keeperhub_tempo_release_hold`/`keeperhub_tempo_cancel_hold` guard against a hallucinated `paymentId`.
 
 ---
 
@@ -172,18 +175,18 @@ flowchart TD
 
 ### Module Responsibilities
 
-| File / Module                                                                                          | Role                                                                                                                                                |
-| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`packages/core/src/firewall/validator.ts`](packages/core/src/firewall/validator.ts)                   | Default-deny whitelist, spend limits, 24h velocity, and dry-run TTL token validation                                                                |
-| [`packages/core/src/firewall/invariants.ts`](packages/core/src/firewall/invariants.ts)                 | Mathematical post-condition assertions on simulation balance deltas and gas units                                                                   |
-| [`packages/core/src/firewall/circuit-breaker.ts`](packages/core/src/firewall/circuit-breaker.ts)       | Runaway loop protection; trips after 3 reverts or 2 consecutive unknown states                                                                      |
-| [`packages/core/src/keeperhub/state-machine.ts`](packages/core/src/keeperhub/state-machine.ts)         | 3-state classification: `CONFIRMED`, `FAILED`, and `UNKNOWN`                                                                                        |
-| [`packages/core/src/keeperhub/idempotency.ts`](packages/core/src/keeperhub/idempotency.ts)             | Pre-request semantic idempotency key persistence and deduplication                                                                                  |
-| [`packages/core/src/keeperhub/client.ts`](packages/core/src/keeperhub/client.ts)                       | Orchestrates firewall, circuit breaker, and idempotency store around whichever transport is active                                                  |
-| [`packages/core/src/keeperhub/mock-transport.ts`](packages/core/src/keeperhub/mock-transport.ts)       | Offline zero-secret simulator for cold judge reproducibility and CI                                                                                 |
-| [`packages/core/src/keeperhub/live-transport.ts`](packages/core/src/keeperhub/live-transport.ts)       | Real KeeperHub MCP client: session handshake, transfers/contract calls/check-and-execute/protocol actions/spending limits, execution-status polling |
-| [`packages/core/src/keeperhub/onchain-transport.ts`](packages/core/src/keeperhub/onchain-transport.ts) | Direct-signer fallback (`viem`) used only when no `KEEPERHUB_API_KEY` is configured                                                                 |
-| [`packages/core/src/daydreams/extension.ts`](packages/core/src/daydreams/extension.ts)                 | Native Daydreams extension factory registering typed Zod action schemas                                                                             |
+| File / Module                                                                                          | Role                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`packages/core/src/firewall/validator.ts`](packages/core/src/firewall/validator.ts)                   | Default-deny whitelist, spend limits, 24h velocity, and dry-run TTL token validation                                                                                           |
+| [`packages/core/src/firewall/invariants.ts`](packages/core/src/firewall/invariants.ts)                 | Mathematical post-condition assertions on simulation balance deltas and gas units                                                                                              |
+| [`packages/core/src/firewall/circuit-breaker.ts`](packages/core/src/firewall/circuit-breaker.ts)       | Runaway loop protection; trips after 3 reverts or 2 consecutive unknown states                                                                                                 |
+| [`packages/core/src/keeperhub/state-machine.ts`](packages/core/src/keeperhub/state-machine.ts)         | 3-state classification: `CONFIRMED`, `FAILED`, and `UNKNOWN`                                                                                                                   |
+| [`packages/core/src/keeperhub/idempotency.ts`](packages/core/src/keeperhub/idempotency.ts)             | Pre-request semantic idempotency key persistence and deduplication                                                                                                             |
+| [`packages/core/src/keeperhub/client.ts`](packages/core/src/keeperhub/client.ts)                       | Orchestrates firewall, circuit breaker, and idempotency store around whichever transport is active                                                                             |
+| [`packages/core/src/keeperhub/mock-transport.ts`](packages/core/src/keeperhub/mock-transport.ts)       | Offline zero-secret simulator for cold judge reproducibility and CI                                                                                                            |
+| [`packages/core/src/keeperhub/live-transport.ts`](packages/core/src/keeperhub/live-transport.ts)       | Real KeeperHub MCP client: session handshake, transfers/contract calls/check-and-execute/protocol actions/spending limits, Tempo hold/release/cancel, execution-status polling |
+| [`packages/core/src/keeperhub/onchain-transport.ts`](packages/core/src/keeperhub/onchain-transport.ts) | Direct-signer fallback (`viem`) used only when no `KEEPERHUB_API_KEY` is configured                                                                                            |
+| [`packages/core/src/daydreams/extension.ts`](packages/core/src/daydreams/extension.ts)                 | Native Daydreams extension factory registering typed Zod action schemas                                                                                                        |
 
 ---
 
@@ -262,7 +265,7 @@ dreamkeeper/
 │       │   ├── daydreams/         # Native Daydreams actions & extension wrapper
 │       │   ├── logger/            # Structured JSON logger (zero external dependencies)
 │       │   └── types/             # Strict TypeScript definitions & Zod schemas
-│       └── tests/                 # 64 unit, invariant, and guardrail tests
+│       └── tests/                 # 76 unit, invariant, and guardrail tests
 ├── examples/
 │   └── demo-agent/                # Showcase Daydreams agent
 │       └── src/
@@ -320,11 +323,11 @@ pnpm demo:real-agent
 ## Tests
 
 ```bash
-# Run all 64 tests with Vitest
+# Run all 76 tests with Vitest
 pnpm test
 ```
 
-_Note on test integrity: All 64 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
+_Note on test integrity: All 76 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
 
 ---
 
