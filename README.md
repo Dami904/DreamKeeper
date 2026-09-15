@@ -225,6 +225,7 @@ See [`docs/API_NOTES.md`](docs/API_NOTES.md) for the full request/response paylo
 - **Field-name bug**: assumed `estimatedGasUnits`/`gasUsed`; the real field is `gasEstimate` — [`a2cc0d9`](https://github.com/Dami904/DreamKeeper/commit/a2cc0d9)
 - **Response-shape bug**: assumed `execute_check_and_execute` used `wouldRevert` like the other tools; a condition-not-met response has no such field at all, only `executed`/`conditionResult` — [`bca93d9`](https://github.com/Dami904/DreamKeeper/commit/bca93d9)
 - **Misclassification bug**: a synchronous read-type protocol action (no `execution_id`) was being returned as `UNKNOWN` instead of `CONFIRMED` — [`11302df`](https://github.com/Dami904/DreamKeeper/commit/11302df)
+- **Decimal-scale bug**: `execute_transfer`'s amount was unconditionally divided by 1e6 (correct for USDC); a real native-ETH dry-run of 0.0009 ETH was sent as `"900000000"` and correctly rejected — every prior live test happened to use USDC, so an 18-decimal native transfer had never been exercised — [`8ba1f9c`](https://github.com/Dami904/DreamKeeper/commit/8ba1f9c)
 
 ---
 
