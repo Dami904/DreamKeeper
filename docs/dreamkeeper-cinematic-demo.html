@@ -1,0 +1,925 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DreamKeeper 3D Explainer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --black: #050a07;
+        --green: #20cc65;
+        --green-2: #72f794;
+        --white: #f4f5fb;
+        --muted: #9fa9a1;
+        --line: rgba(114, 247, 148, 0.18);
+        --panel: rgba(7, 13, 9, 0.78);
+        --amber: #ffd166;
+        --blue: #8eb8ff;
+        --red: #ff6159;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 76% 24%, rgba(32, 204, 101, 0.14), transparent 27rem),
+          radial-gradient(circle at 18% 78%, rgba(142, 184, 255, 0.12), transparent 26rem),
+          linear-gradient(180deg, #030604 0%, #07100a 52%, #102214 100%);
+        color: var(--white);
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .app {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        min-height: 720px;
+        overflow: hidden;
+        isolation: isolate;
+      }
+
+      .floor {
+        position: absolute;
+        left: -18vw;
+        right: -18vw;
+        bottom: -24vh;
+        height: 72vh;
+        background-image:
+          linear-gradient(rgba(114, 247, 148, 0.1) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(114, 247, 148, 0.1) 1px, transparent 1px);
+        background-size: 64px 64px;
+        transform: perspective(760px) rotateX(66deg);
+        transform-origin: center bottom;
+        mask-image: linear-gradient(transparent 0%, black 24%, black 100%);
+        animation: floorDrift 18s linear infinite;
+      }
+
+      .glow {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(180deg, rgba(3, 6, 4, 0.68), transparent 36%),
+          linear-gradient(90deg, rgba(32, 204, 101, 0.08), transparent 32%, transparent 68%, rgba(142, 184, 255, 0.08));
+        pointer-events: none;
+        z-index: 2;
+      }
+
+      .brand {
+        position: absolute;
+        top: 28px;
+        left: 34px;
+        z-index: 9;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .logo-mark {
+        position: relative;
+        width: 82px;
+        height: 54px;
+      }
+
+      .logo-mark::before,
+      .logo-mark::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        width: 14px;
+        height: 54px;
+        border-radius: 5px;
+        background: var(--green);
+      }
+
+      .logo-mark::before {
+        left: 0;
+      }
+
+      .logo-mark::after {
+        right: 0;
+      }
+
+      .logo-arrow {
+        position: absolute;
+        left: 22px;
+        top: 22px;
+        width: 42px;
+        height: 11px;
+        background: var(--green);
+      }
+
+      .logo-arrow::after {
+        content: "";
+        position: absolute;
+        right: -14px;
+        top: -10px;
+        border-top: 16px solid transparent;
+        border-bottom: 16px solid transparent;
+        border-left: 18px solid var(--green);
+      }
+
+      .wordmark {
+        font-size: clamp(26px, 3.3vw, 52px);
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .wordmark span:first-child {
+        color: var(--white);
+      }
+
+      .wordmark span:last-child {
+        color: var(--green);
+      }
+
+      .scene-label {
+        position: absolute;
+        top: 34px;
+        right: 34px;
+        z-index: 9;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      .copy {
+        position: absolute;
+        top: 112px;
+        left: 34px;
+        z-index: 8;
+        width: min(700px, calc(100vw - 68px));
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(32px, 3.4vw + 3vh, 86px);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      .accent {
+        color: var(--green);
+      }
+
+      .body {
+        max-width: 660px;
+        margin: 18px 0 0;
+        color: var(--muted);
+        font-size: clamp(15px, 1.45vw, 20px);
+        line-height: 1.55;
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        transform: translateY(22px);
+        transition:
+          opacity 460ms ease,
+          transform 680ms cubic-bezier(0.22, 0.72, 0.16, 1);
+        pointer-events: none;
+      }
+
+      .scene.active {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      .world {
+        position: absolute;
+        inset: 24vh 2vw 15vh;
+        z-index: 4;
+        perspective: 1100px;
+      }
+
+      .gate-3d {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: min(380px, 31vw);
+        height: min(250px, 21vw);
+        transform: translate(-50%, -42%) rotateX(58deg) rotateZ(0deg);
+        transform-style: preserve-3d;
+      }
+
+      .rail-3d {
+        position: absolute;
+        top: 0;
+        width: 44px;
+        height: 100%;
+        border-radius: 10px;
+        background: linear-gradient(180deg, var(--green-2), var(--green));
+        box-shadow:
+          0 0 28px rgba(32, 204, 101, 0.42),
+          26px 26px 0 rgba(0, 0, 0, 0.22);
+      }
+
+      .rail-3d.left {
+        left: 0;
+      }
+
+      .rail-3d.right {
+        right: 0;
+      }
+
+      .arrow-3d {
+        position: absolute;
+        left: 96px;
+        top: 102px;
+        width: 142px;
+        height: 36px;
+        background: linear-gradient(90deg, var(--green), var(--green-2));
+        box-shadow:
+          0 0 32px rgba(32, 204, 101, 0.36),
+          18px 18px 0 rgba(0, 0, 0, 0.2);
+      }
+
+      .arrow-3d::after {
+        content: "";
+        position: absolute;
+        right: -56px;
+        top: -30px;
+        border-top: 48px solid transparent;
+        border-bottom: 48px solid transparent;
+        border-left: 58px solid var(--green-2);
+      }
+
+      .orbit {
+        position: absolute;
+        left: 50%;
+        top: 52%;
+        width: min(78vw, 1080px);
+        aspect-ratio: 1 / 0.38;
+        border: 2px solid rgba(142, 184, 255, 0.22);
+        border-radius: 50%;
+        transform: translate(-50%, -30%) rotateX(64deg);
+        box-shadow: 0 0 74px rgba(142, 184, 255, 0.12);
+      }
+
+      .cube {
+        position: absolute;
+        left: var(--x);
+        top: var(--y);
+        width: var(--s);
+        height: var(--s);
+        transform-style: preserve-3d;
+        transform: rotateX(-18deg) rotateY(32deg);
+        animation: hover 4s ease-in-out infinite;
+      }
+
+      .cube div {
+        position: absolute;
+        inset: 0;
+        border: 2px solid rgba(0, 0, 0, 0.92);
+        background: linear-gradient(145deg, var(--a), var(--b));
+      }
+
+      .front {
+        transform: translateZ(calc(var(--s) / 2));
+      }
+
+      .back {
+        transform: rotateY(180deg) translateZ(calc(var(--s) / 2));
+      }
+
+      .right {
+        transform: rotateY(90deg) translateZ(calc(var(--s) / 2));
+        filter: brightness(0.75);
+      }
+
+      .left {
+        transform: rotateY(-90deg) translateZ(calc(var(--s) / 2));
+        filter: brightness(0.62);
+      }
+
+      .top {
+        transform: rotateX(90deg) translateZ(calc(var(--s) / 2));
+        filter: brightness(1.16);
+      }
+
+      .bottom {
+        transform: rotateX(-90deg) translateZ(calc(var(--s) / 2));
+        filter: brightness(0.5);
+      }
+
+      .pipeline {
+        position: absolute;
+        left: 6vw;
+        right: 6vw;
+        bottom: 190px;
+        z-index: 6;
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+      }
+
+      .gate {
+        min-height: 124px;
+        padding: 16px;
+        border: 1px solid rgba(244, 245, 251, 0.13);
+        background: var(--panel);
+        backdrop-filter: blur(12px);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .gate::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 4px;
+        background: var(--green);
+        box-shadow: 0 0 18px rgba(32, 204, 101, 0.55);
+      }
+
+      .gate.warn::before {
+        background: var(--amber);
+      }
+
+      .gate b {
+        display: block;
+        font-size: clamp(17px, 1.7vw, 26px);
+        line-height: 1.04;
+      }
+
+      .gate span {
+        display: block;
+        margin-top: 12px;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .terminal {
+        position: absolute;
+        right: 5vw;
+        bottom: 190px;
+        z-index: 6;
+        width: min(650px, 49vw);
+        min-height: 338px;
+        padding: 22px;
+        border: 1px solid rgba(244, 245, 251, 0.14);
+        background: rgba(4, 6, 5, 0.84);
+        box-shadow: 0 32px 52px rgba(0, 0, 0, 0.45);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: clamp(12px, 1vw, 15px);
+        line-height: 1.55;
+      }
+
+      .terminal p {
+        margin: 0 0 12px;
+      }
+
+      .green {
+        color: var(--green-2);
+      }
+
+      .red {
+        color: var(--red);
+      }
+
+      .blue {
+        color: var(--blue);
+      }
+
+      .proof-grid {
+        position: absolute;
+        right: 6vw;
+        top: 24vh;
+        z-index: 6;
+        width: min(560px, 42vw);
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+      }
+
+      .proof {
+        min-height: 146px;
+        padding: 20px;
+        border: 1px solid rgba(244, 245, 251, 0.13);
+        background: rgba(7, 13, 9, 0.76);
+      }
+
+      .proof b {
+        display: block;
+        font-size: clamp(34px, 4.4vw, 62px);
+        line-height: 0.9;
+      }
+
+      .proof span {
+        display: block;
+        margin-top: 12px;
+        color: var(--muted);
+      }
+
+      .network-card {
+        position: absolute;
+        right: 8vw;
+        bottom: 190px;
+        z-index: 6;
+        width: min(470px, 39vw);
+        padding: 22px;
+        border: 1px solid rgba(32, 204, 101, 0.24);
+        background: rgba(7, 13, 9, 0.86);
+        box-shadow: 0 30px 50px rgba(0, 0, 0, 0.42);
+      }
+
+      .network-card h2 {
+        margin: 0 0 18px;
+        font-size: 24px;
+      }
+
+      .rail {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .rail:first-of-type {
+        border-top: 0;
+      }
+
+      .rail-dot {
+        width: 14px;
+        height: 14px;
+        background: var(--green);
+        box-shadow: 0 0 16px rgba(32, 204, 101, 0.48);
+      }
+
+      .rail small {
+        display: block;
+        color: var(--muted);
+        margin-top: 3px;
+      }
+
+      .caption {
+        position: absolute;
+        left: 50%;
+        bottom: 68px;
+        z-index: 9;
+        width: min(900px, calc(100vw - 44px));
+        transform: translateX(-50%);
+        font-size: clamp(20px, 2.5vw, 34px);
+        font-weight: 820;
+        line-height: 1.18;
+      }
+
+      .caption span {
+        padding: 0.1em 0.28em;
+        background: rgba(0, 0, 0, 0.76);
+        box-decoration-break: clone;
+        -webkit-box-decoration-break: clone;
+      }
+
+      .controls {
+        position: absolute;
+        left: 34px;
+        right: 34px;
+        bottom: 22px;
+        z-index: 10;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .buttons {
+        display: flex;
+        gap: 8px;
+      }
+
+      .icon-button {
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(244, 245, 251, 0.17);
+        background: rgba(4, 6, 5, 0.74);
+        color: var(--white);
+        cursor: pointer;
+      }
+
+      .icon-button:hover {
+        border-color: rgba(32, 204, 101, 0.62);
+      }
+
+      .bar {
+        height: 7px;
+        background: rgba(244, 245, 251, 0.13);
+        overflow: hidden;
+      }
+
+      .bar span {
+        display: block;
+        width: 0;
+        height: 100%;
+        background: var(--green);
+        box-shadow: 0 0 18px rgba(32, 204, 101, 0.62);
+        transition: width 360ms ease;
+      }
+
+      .count {
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+
+      .close-card {
+        position: absolute;
+        left: 6vw;
+        bottom: 190px;
+        z-index: 6;
+        width: min(640px, 70vw);
+      }
+
+      .close-repo {
+        display: inline-block;
+        padding: 10px 18px;
+        margin-bottom: 18px;
+        border: 1px solid rgba(32, 204, 101, 0.4);
+        background: rgba(32, 204, 101, 0.08);
+        color: var(--green-2);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: clamp(14px, 1.3vw, 19px);
+        letter-spacing: 0.02em;
+      }
+
+      .close-cmds {
+        padding: 20px 22px;
+        border: 1px solid rgba(244, 245, 251, 0.14);
+        background: rgba(4, 6, 5, 0.84);
+        box-shadow: 0 32px 52px rgba(0, 0, 0, 0.45);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: clamp(12px, 1vw, 15px);
+        line-height: 1.7;
+      }
+
+      .close-cmds p {
+        margin: 0;
+      }
+
+      @keyframes floorDrift {
+        to {
+          background-position: 0 64px, 64px 0;
+        }
+      }
+
+      @keyframes hover {
+        50% {
+          transform: rotateX(-18deg) rotateY(32deg) translateY(-12px);
+        }
+      }
+
+      @media (max-height: 950px) {
+        h1 {
+          font-size: clamp(28px, 3vw, 50px);
+          line-height: 1.08;
+        }
+
+        .copy {
+          top: 84px;
+        }
+
+        .body {
+          margin-top: 12px;
+        }
+      }
+
+      @media (max-width: 860px) {
+        .app {
+          min-height: 780px;
+        }
+
+        .brand {
+          left: 20px;
+          top: 18px;
+          gap: 12px;
+        }
+
+        .logo-mark {
+          width: 60px;
+          height: 40px;
+        }
+
+        .logo-mark::before,
+        .logo-mark::after {
+          width: 10px;
+          height: 40px;
+        }
+
+        .logo-arrow {
+          left: 16px;
+          top: 16px;
+          width: 30px;
+          height: 8px;
+        }
+
+        .logo-arrow::after {
+          right: -10px;
+          top: -8px;
+          border-top-width: 12px;
+          border-bottom-width: 12px;
+          border-left-width: 14px;
+        }
+
+        .scene-label {
+          display: none;
+        }
+
+        .copy {
+          left: 22px;
+          top: 84px;
+          width: calc(100vw - 44px);
+        }
+
+        .world {
+          inset: 31vh -8vw 19vh;
+          transform: scale(0.76);
+        }
+
+        .pipeline {
+          left: 22px;
+          right: 22px;
+          bottom: 170px;
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .gate {
+          min-height: 88px;
+          padding: 12px;
+        }
+
+        .terminal,
+        .proof-grid,
+        .network-card,
+        .close-card {
+          left: 22px;
+          right: 22px;
+          width: auto;
+        }
+
+        .close-card {
+          bottom: 170px;
+        }
+
+        .terminal {
+          bottom: 170px;
+          min-height: 280px;
+        }
+
+        .proof-grid {
+          top: auto;
+          bottom: 170px;
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .proof {
+          min-height: 102px;
+          padding: 14px;
+        }
+
+        .network-card {
+          bottom: 170px;
+        }
+
+        .caption {
+          bottom: 72px;
+          font-size: 21px;
+        }
+
+        .controls {
+          left: 22px;
+          right: 22px;
+          bottom: 18px;
+          grid-template-columns: auto 1fr;
+        }
+
+        .count {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app" aria-label="DreamKeeper 3D explainer">
+      <div class="floor"></div>
+      <div class="glow"></div>
+      <div class="brand">
+        <div class="logo-mark" aria-hidden="true"><span class="logo-arrow"></span></div>
+        <div class="wordmark"><span>Dream</span><span>Keeper</span></div>
+      </div>
+      <div class="scene-label" data-scene-label>01 / Problem</div>
+
+      <section
+        class="scene active"
+        data-label="01 / Problem"
+        data-caption="Agents are probabilistic by design. On-chain value transfer does not forgive that."
+      >
+        <div class="copy">
+          <h1>The agent can reason. The chain only <span class="accent">settles</span>.</h1>
+          <p class="body">
+            A hallucinated address, a prompt injection, or a dropped network packet can become an irreversible transaction. DreamKeeper removes the model from the trust boundary.
+          </p>
+        </div>
+        <div class="world" aria-hidden="true">
+          <div class="orbit"></div>
+          <div class="gate-3d">
+            <div class="rail-3d left"></div>
+            <div class="arrow-3d"></div>
+            <div class="rail-3d right"></div>
+          </div>
+          <div class="cube" style="--x: 14%; --y: 43%; --s: 86px; --a: #25341e; --b: #10160f">
+            <div class="front"></div><div class="back"></div><div class="right"></div><div class="left"></div><div class="top"></div><div class="bottom"></div>
+          </div>
+          <div class="cube" style="--x: 72%; --y: 34%; --s: 102px; --a: #2d3755; --b: #111726">
+            <div class="front"></div><div class="back"></div><div class="right"></div><div class="left"></div><div class="top"></div><div class="bottom"></div>
+          </div>
+          <div class="cube" style="--x: 31%; --y: 63%; --s: 64px; --a: #4a3720; --b: #18110a">
+            <div class="front"></div><div class="back"></div><div class="right"></div><div class="left"></div><div class="top"></div><div class="bottom"></div>
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="scene"
+        data-label="02 / What it does"
+        data-caption="The agent proposes. A deterministic TypeScript firewall decides what can reach KeeperHub."
+      >
+        <div class="copy">
+          <h1>A Daydreams agent gets real execution, without getting raw trust.</h1>
+          <p class="body">
+            DreamKeeper wires transfers, contract calls, check-and-execute flows, protocol actions, and Tempo payments into KeeperHub. The permission layer is code, not vibes.
+          </p>
+        </div>
+        <div class="pipeline" aria-hidden="true">
+          <div class="gate"><b>Agent intent</b><span>Daydreams action call</span></div>
+          <div class="gate"><b>Firewall</b><span>plain TypeScript policy</span></div>
+          <div class="gate"><b>Dry run</b><span>hash-bound token</span></div>
+          <div class="gate warn"><b>KeeperHub</b><span>execution infrastructure</span></div>
+          <div class="gate"><b>Receipt</b><span>confirmed / failed / unknown</span></div>
+        </div>
+      </section>
+
+      <section
+        class="scene"
+        data-label="03 / How it decides"
+        data-caption="Every intent passes the same ordered gate before anything touches a network."
+      >
+        <div class="copy">
+          <h1>Safety is a sequence, not a suggestion.</h1>
+          <p class="body">
+            Address whitelist, spend caps, simulation token, TTL, intent binding, circuit breaker, and Tempo payment ownership checks run before execution.
+          </p>
+        </div>
+        <div class="terminal" aria-hidden="true">
+          <p class="blue">validateIntent(intent)</p>
+          <p class="green">PASS address whitelist</p>
+          <p class="green">PASS per-transaction cap + 24h cap</p>
+          <p class="green">PASS method / protocol allowlist</p>
+          <p class="blue">validateExecution(intent, dryRunToken)</p>
+          <p class="green">PASS token present</p>
+          <p class="green">PASS token age &lt; 60 seconds</p>
+          <p class="green">PASS intent hash matches</p>
+          <p class="red">BLOCK unknown Tempo paymentId</p>
+        </div>
+      </section>
+
+      <section
+        class="scene"
+        data-label="04 / Proof"
+        data-caption="DreamKeeper is backed by tests, live-model transcripts, and cold-clone chain verification."
+      >
+        <div class="copy">
+          <h1>Proof, not claims.</h1>
+          <p class="body">
+            Real adversarial LLM runs, a fresh cold clone against KeeperHub, zero-secret local tests, and documented API mismatches found by integration work.
+          </p>
+        </div>
+        <div class="proof-grid" aria-hidden="true">
+          <div class="proof"><b>7 / 8</b><span>attack scenarios live-verified blocked</span></div>
+          <div class="proof"><b>0</b><span>false negatives across fired tool calls</span></div>
+          <div class="proof"><b>94</b><span>secret-free automated tests</span></div>
+          <div class="proof"><b>cold</b><span>clone re-verified against chain RPC</span></div>
+        </div>
+      </section>
+
+      <section
+        class="scene"
+        data-label="05 / Integration"
+        data-caption="Nine KeeperHub MCP tools become eleven Daydreams actions across Base Sepolia and Tempo Testnet."
+      >
+        <div class="copy">
+          <h1>It is deeper than one wrapped API call.</h1>
+          <p class="body">
+            DreamKeeper spans transfers, contract calls, conditional execution, protocol actions, spending limits, and Tempo sign-hold-release or cancel flows.
+          </p>
+        </div>
+        <div class="network-card" aria-hidden="true">
+          <h2>Integrated rails</h2>
+          <div class="rail"><span class="rail-dot"></span><div><strong>Base Sepolia</strong><small>real KeeperHub transaction receipts</small></div></div>
+          <div class="rail"><span class="rail-dot"></span><div><strong>Tempo Testnet</strong><small>stablecoin hold, release, and cancel lifecycle</small></div></div>
+          <div class="rail"><span class="rail-dot"></span><div><strong>Daydreams</strong><small>eleven agent-facing execution actions</small></div></div>
+        </div>
+      </section>
+
+      <section
+        class="scene"
+        data-label="06 / Try it"
+        data-caption="Clone it, run pnpm test, then watch a real model try to break it."
+      >
+        <div class="copy">
+          <h1>See it decide <span class="accent">yourself</span>.</h1>
+          <p class="body">
+            No secrets required to verify any of this. Clone the repo, run the test suite, then run the same live attack scenarios shown here.
+          </p>
+        </div>
+        <div class="close-card" aria-hidden="true">
+          <div class="close-repo">github.com/Dami904/DreamKeeper</div>
+          <div class="close-cmds">
+            <p><span class="blue">$</span> git clone https://github.com/Dami904/DreamKeeper.git</p>
+            <p><span class="blue">$</span> pnpm install &amp;&amp; pnpm test</p>
+            <p><span class="blue">$</span> pnpm demo:real-agent</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="caption" aria-live="polite"><span></span></div>
+      <nav class="controls" aria-label="Explainer controls">
+        <div class="buttons">
+          <button class="icon-button" type="button" data-prev aria-label="Previous scene" title="Previous scene">&lsaquo;</button>
+          <button class="icon-button" type="button" data-play aria-label="Pause autoplay" title="Pause autoplay">II</button>
+          <button class="icon-button" type="button" data-next aria-label="Next scene" title="Next scene">&rsaquo;</button>
+        </div>
+        <div class="bar" aria-hidden="true"><span></span></div>
+        <div class="count">1 / 5</div>
+      </nav>
+    </main>
+
+    <script>
+      const scenes = [...document.querySelectorAll(".scene")];
+      const caption = document.querySelector(".caption span");
+      const label = document.querySelector("[data-scene-label]");
+      const bar = document.querySelector(".bar span");
+      const count = document.querySelector(".count");
+      const playButton = document.querySelector("[data-play]");
+      let index = 0;
+      let playing = true;
+      let timer;
+
+      function showScene(nextIndex) {
+        index = (nextIndex + scenes.length) % scenes.length;
+        scenes.forEach((scene, sceneIndex) => {
+          scene.classList.toggle("active", sceneIndex === index);
+        });
+        caption.textContent = scenes[index].dataset.caption;
+        label.textContent = scenes[index].dataset.label;
+        bar.style.width = `${((index + 1) / scenes.length) * 100}%`;
+        count.textContent = `${index + 1} / ${scenes.length}`;
+        resetTimer();
+      }
+
+      function resetTimer() {
+        window.clearInterval(timer);
+        if (playing) timer = window.setInterval(() => showScene(index + 1), 7200);
+      }
+
+      document.querySelector("[data-prev]").addEventListener("click", () => showScene(index - 1));
+      document.querySelector("[data-next]").addEventListener("click", () => showScene(index + 1));
+      playButton.addEventListener("click", () => {
+        playing = !playing;
+        playButton.textContent = playing ? "II" : ">";
+        playButton.setAttribute("aria-label", playing ? "Pause autoplay" : "Play autoplay");
+        resetTimer();
+      });
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowRight") showScene(index + 1);
+        if (event.key === "ArrowLeft") showScene(index - 1);
+        if (event.key === " ") {
+          event.preventDefault();
+          playButton.click();
+        }
+      });
+
+      showScene(0);
+    </script>
+  </body>
+</html>

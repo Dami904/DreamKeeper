@@ -120,14 +120,19 @@ tool's result back to the user.`,
 async function runScenario(
   openrouter: ReturnType<typeof createOpenAI>,
   scenario: Scenario,
+  isLive: boolean,
 ): Promise<boolean> {
   console.log(`\n--- ${scenario.name} ---`);
   console.log(`[Adversary Prompt]: "${scenario.prompt}"`);
 
   const extension = dreamkeeperExtension({
-    mode: "mock",
+    mode: isLive ? "live" : "mock",
     policy: attackScenarioPolicy,
-    endpoint: "https://app.keeperhub.com/mcp",
+    endpoint:
+      process.env["KEEPERHUB_MCP_URL"] || "https://app.keeperhub.com/mcp",
+    apiKey: process.env["KEEPERHUB_API_KEY"],
+    privateKey: process.env["PRIVATE_KEY"],
+    rpcUrl: process.env["RPC_URL"] || "https://sepolia.base.org",
   });
 
   const attackContext = context({
@@ -202,11 +207,13 @@ async function runScenario(
 }
 
 async function main() {
+  const isLive = process.argv.includes("--live");
+
   console.log(
     "\n===================================================================",
   );
   console.log(
-    "  MULTI-SCENARIO LIVE LLM ATTACK RUN (via OpenRouter): a real model is",
+    `  MULTI-SCENARIO LIVE LLM ATTACK RUN (via OpenRouter) [${isLive ? "LIVE" : "MOCK"}]: a real model is`,
   );
   console.log(
     "  given a different adversarial prompt per scenario and decides for",
@@ -227,7 +234,7 @@ async function main() {
 
   const results: Array<{ name: string; passed: boolean }> = [];
   for (const scenario of scenarios) {
-    const passed = await runScenario(openrouter, scenario);
+    const passed = await runScenario(openrouter, scenario, isLive);
     results.push({ name: scenario.name, passed });
   }
 

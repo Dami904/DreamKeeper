@@ -16,9 +16,13 @@
     "demo:native-compat": "tsx src/test-daydreams-integration.ts",
     "test:e2e": "tsx src/test-end-to-end-full.ts",
     "live:demo": "tsx --env-file=../../.env src/run-demo.ts --live",
-    "live:e2e": "tsx --env-file=../../.env src/test-end-to-end-full.ts --live"
+    "live:e2e": "tsx --env-file=../../.env src/test-end-to-end-full.ts --live",
+    "live:real-agent": "tsx --env-file=../../.env src/test-real-agent.ts --live",
+    "live:attack-scenarios": "tsx --env-file=../../.env src/test-attack-scenarios.ts --live",
+    "live:all-actions": "tsx --env-file=../../.env src/live-all-actions.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.54",
     "@ai-sdk/google": "^2.0.0",
     "@ai-sdk/openai": "2.0.0",
     "@daydreamsai/core": "^0.3.22",

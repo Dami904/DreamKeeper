@@ -4,11 +4,13 @@ import { z } from "zod";
 import { createDemoExtension, DEMO_APPROVED_VAULT } from "./agent.js";
 
 async function main() {
+  const isLive = process.argv.includes("--live");
+
   console.log(
     "\n===================================================================",
   );
   console.log(
-    "  REAL LLM-DRIVEN RUN (via OpenRouter): a live model decides whether",
+    `  REAL LLM-DRIVEN RUN (via OpenRouter) [${isLive ? "LIVE" : "MOCK"}]: a live model decides whether`,
   );
   console.log("  to call KeeperHub, not a scripted handler call");
   console.log(
@@ -27,7 +29,7 @@ async function main() {
     baseURL: "https://openrouter.ai/api/v1",
   });
 
-  const extension = createDemoExtension("mock");
+  const extension = createDemoExtension(isLive ? "live" : "mock");
 
   const paymentAgentContext = context({
     type: "payment-agent",
