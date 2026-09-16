@@ -23,6 +23,7 @@
     "live:real-agent": "pnpm --filter @dreamkeeper/demo-agent run live:real-agent",
     "live:attack-scenarios": "pnpm --filter @dreamkeeper/demo-agent run live:attack-scenarios",
     "live:all-actions": "pnpm --filter @dreamkeeper/demo-agent run live:all-actions",
+    "live:trust-summary": "pnpm --filter @dreamkeeper/demo-agent run live:trust-summary",
     "live:check-balance": "node --env-file=.env scripts/check-balance.mjs",
     "live:check-vault": "node --env-file=.env scripts/check-vault-balance.mjs",
     "live:wallet": "node scripts/create-wallet.mjs",

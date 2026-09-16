@@ -19,7 +19,8 @@
     "live:e2e": "tsx --env-file=../../.env src/test-end-to-end-full.ts --live",
     "live:real-agent": "tsx --env-file=../../.env src/test-real-agent.ts --live",
     "live:attack-scenarios": "tsx --env-file=../../.env src/test-attack-scenarios.ts --live",
-    "live:all-actions": "tsx --env-file=../../.env src/live-all-actions.ts"
+    "live:all-actions": "tsx --env-file=../../.env src/live-all-actions.ts",
+    "live:trust-summary": "tsx --env-file=../../.env src/live-trust-summary.ts --live"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.54",
