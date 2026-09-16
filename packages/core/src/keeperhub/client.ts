@@ -2,6 +2,7 @@ import type {
   AuditEntry,
   CheckAndExecuteExecutionIntent,
   CheckAndExecuteIntent,
+  CircuitState,
   DryRunIntent,
   DryRunResult,
   DryRunToken,
@@ -24,6 +25,10 @@ import {
 } from "../firewall/validator.js";
 import { CircuitBreaker } from "../firewall/circuit-breaker.js";
 import {
+  TrustLedger,
+  type TrustLedgerSnapshot,
+} from "../firewall/trust-ledger.js";
+import {
   type IdempotencyStore,
   MemoryIdempotencyStore,
   FileIdempotencyStore,
@@ -43,34 +48,43 @@ const CIRCUIT_BREAKER_PERSISTED_METHODS = new Set([
   "forceOpen",
 ]);
 
+const TRUST_LEDGER_PERSISTED_METHODS = new Set([
+  "recordBlocked",
+  "recordConfirmed",
+  "recordFailed",
+  "recordUnknown",
+]);
+
 /**
- * Wraps a CircuitBreaker so every state-changing call also persists a fresh
- * snapshot to disk — keeps CircuitBreaker itself free of filesystem
- * concerns (see CircuitBreakerSnapshot's doc comment) while still surviving
- * a process restart when the client was constructed with `persistDir`.
+ * Wraps a snapshot-capable object (CircuitBreaker, TrustLedger) so every
+ * named state-changing method call also persists a fresh snapshot to disk —
+ * keeps the wrapped class itself free of filesystem concerns while still
+ * surviving a process restart when the client was constructed with
+ * `persistDir`.
  */
-function withFilePersistence(
-  breaker: CircuitBreaker,
+function withFilePersistence<T extends { getSnapshot(): unknown }>(
+  target: T,
+  methodNames: Set<string>,
   filePath: string,
-): CircuitBreaker {
-  return new Proxy(breaker, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
+): T {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      const value = Reflect.get(obj as object, prop, receiver);
       if (
         typeof value === "function" &&
         typeof prop === "string" &&
-        CIRCUIT_BREAKER_PERSISTED_METHODS.has(prop)
+        methodNames.has(prop)
       ) {
         return (...args: unknown[]) => {
           const result = (value as (...a: unknown[]) => unknown).apply(
-            target,
+            obj,
             args,
           );
-          writeJsonFile(filePath, target.getSnapshot());
+          writeJsonFile(filePath, obj.getSnapshot());
           return result;
         };
       }
-      return typeof value === "function" ? value.bind(target) : value;
+      return typeof value === "function" ? value.bind(obj) : value;
     },
   });
 }
@@ -80,6 +94,7 @@ export class KeeperHubClient {
   private transport: KeeperHubTransport;
   private firewall: FirewallValidator;
   private circuitBreaker: CircuitBreaker;
+  private trustLedger: TrustLedger;
   private idempotencyStore: IdempotencyStore;
 
   // Cache active approved dry-run tokens by tokenId
@@ -99,6 +114,7 @@ export class KeeperHubClient {
   // client writes their state to disk itself after every mutating call.
   private tempoHoldsFilePath: string | undefined;
   private circuitBreakerFilePath: string | undefined;
+  private trustLedgerFilePath: string | undefined;
 
   constructor(
     config: KeeperHubConfig,
@@ -130,6 +146,7 @@ export class KeeperHubClient {
     }
 
     this.circuitBreaker = dependencies?.circuitBreaker ?? new CircuitBreaker();
+    this.trustLedger = new TrustLedger();
     if (dependencies?.persistDir) {
       this.circuitBreakerFilePath = join(
         dependencies.persistDir,
@@ -143,7 +160,25 @@ export class KeeperHubClient {
       }
       this.circuitBreaker = withFilePersistence(
         this.circuitBreaker,
+        CIRCUIT_BREAKER_PERSISTED_METHODS,
         this.circuitBreakerFilePath,
+      );
+
+      this.trustLedgerFilePath = join(
+        dependencies.persistDir,
+        "trust-ledger.json",
+      );
+      const trustSnapshot = readJsonFile<TrustLedgerSnapshot | undefined>(
+        this.trustLedgerFilePath,
+        undefined,
+      );
+      if (trustSnapshot) {
+        this.trustLedger.restoreSnapshot(trustSnapshot);
+      }
+      this.trustLedger = withFilePersistence(
+        this.trustLedger,
+        TRUST_LEDGER_PERSISTED_METHODS,
+        this.trustLedgerFilePath,
       );
 
       this.tempoHoldsFilePath = join(
@@ -204,6 +239,22 @@ export class KeeperHubClient {
     return this.circuitBreaker;
   }
 
+  /**
+   * Returns a self-reported summary of this client's own firewall-block and
+   * execution-outcome history. This is local and locally-persisted only —
+   * not hosted, not attested, and not reachable by a counterparty unless it
+   * has direct access to this same running instance. See
+   * docs/LIMITATIONS.md for that scope boundary.
+   */
+  public getTrustSummary(): TrustLedgerSnapshot & {
+    circuitBreakerState: CircuitState;
+  } {
+    return {
+      ...this.trustLedger.getSnapshot(),
+      circuitBreakerState: this.circuitBreaker.getState(),
+    };
+  }
+
   public getIdempotencyStore(): IdempotencyStore {
     return this.idempotencyStore;
   }
@@ -239,6 +290,7 @@ export class KeeperHubClient {
       logger.warn("dryRun blocked by Firewall", {
         context: { reason: validation.reason },
       });
+      this.trustLedger.recordBlocked(validation.reason);
       return {
         ok: false,
         revertReason: validation.reason,
@@ -297,6 +349,7 @@ export class KeeperHubClient {
     // 4. Firewall Execution & TTL Validation
     const validation = this.firewall.validateExecution(intent, token);
     if (!validation.valid) {
+      this.trustLedger.recordBlocked(validation.reason);
       return {
         state: "FAILED",
         idempotencyKey: intent.idempotencyKey,
@@ -326,13 +379,16 @@ export class KeeperHubClient {
 
     if (result.state === "CONFIRMED") {
       this.circuitBreaker.recordSuccess();
+      this.trustLedger.recordConfirmed();
       this.firewall.recordSpend(intent.amount);
       // Consume the dryRunToken so it cannot be re-used
       this.activeDryRunTokens.delete(intent.dryRunTokenId);
     } else if (result.state === "FAILED") {
       this.circuitBreaker.recordFailure(result.revertReason || result.error);
+      this.trustLedger.recordFailed();
     } else if (result.state === "UNKNOWN") {
       this.circuitBreaker.recordUnknown(result.error);
+      this.trustLedger.recordUnknown();
     }
 
     return result;
@@ -349,10 +405,13 @@ export class KeeperHubClient {
 
     if (result.state === "CONFIRMED") {
       this.circuitBreaker.recordSuccess();
+      this.trustLedger.recordConfirmed();
     } else if (result.state === "FAILED") {
       this.circuitBreaker.recordFailure(result.revertReason || result.error);
+      this.trustLedger.recordFailed();
     } else if (result.state === "UNKNOWN") {
       this.circuitBreaker.recordUnknown(result.error);
+      this.trustLedger.recordUnknown();
     }
 
     return result;
@@ -400,6 +459,7 @@ export class KeeperHubClient {
       intent.params,
     );
     if (!validation.valid) {
+      this.trustLedger.recordBlocked(validation.reason);
       return {
         state: "FAILED",
         idempotencyKey: intent.idempotencyKey,
@@ -426,10 +486,13 @@ export class KeeperHubClient {
 
     if (result.state === "CONFIRMED") {
       this.circuitBreaker.recordSuccess();
+      this.trustLedger.recordConfirmed();
     } else if (result.state === "FAILED") {
       this.circuitBreaker.recordFailure(result.revertReason || result.error);
+      this.trustLedger.recordFailed();
     } else if (result.state === "UNKNOWN") {
       this.circuitBreaker.recordUnknown(result.error);
+      this.trustLedger.recordUnknown();
     }
 
     return result;
@@ -472,6 +535,7 @@ export class KeeperHubClient {
       logger.warn("Tempo sign-and-hold blocked by Firewall", {
         context: { reason: validation.reason },
       });
+      this.trustLedger.recordBlocked(validation.reason);
       return {
         ok: false,
         revertReason: validation.reason,
@@ -537,6 +601,7 @@ export class KeeperHubClient {
       logger.warn("Tempo release blocked: unknown paymentId", {
         context: { paymentId },
       });
+      this.trustLedger.recordBlocked("TEMPO_PAYMENT_ID_UNKNOWN");
       return {
         state: "FAILED",
         idempotencyKey: key,
@@ -562,13 +627,16 @@ export class KeeperHubClient {
 
     if (result.state === "CONFIRMED") {
       this.circuitBreaker.recordSuccess();
+      this.trustLedger.recordConfirmed();
       this.firewall.recordTempoSpend(tracked.amount);
       this.activeTempoHolds.delete(paymentId);
       this.persistTempoHolds();
     } else if (result.state === "FAILED") {
       this.circuitBreaker.recordFailure(result.revertReason || result.error);
+      this.trustLedger.recordFailed();
     } else if (result.state === "UNKNOWN") {
       this.circuitBreaker.recordUnknown(result.error);
+      this.trustLedger.recordUnknown();
     }
 
     return result;
@@ -587,6 +655,7 @@ export class KeeperHubClient {
       logger.warn("Tempo cancel blocked: unknown paymentId", {
         context: { paymentId },
       });
+      this.trustLedger.recordBlocked("TEMPO_PAYMENT_ID_UNKNOWN");
       return {
         ok: false,
         error: `FIREWALL_BLOCKED: paymentId '${paymentId}' was not created by this client.`,
@@ -644,6 +713,7 @@ export class KeeperHubClient {
       logger.warn("check-and-execute dryRun blocked by Firewall", {
         context: { reason: validation.reason },
       });
+      this.trustLedger.recordBlocked(validation.reason);
       return {
         ok: false,
         revertReason: validation.reason,
@@ -706,6 +776,7 @@ export class KeeperHubClient {
       method: intent.action.functionName,
     });
     if (!baseValidation.valid) {
+      this.trustLedger.recordBlocked(baseValidation.reason);
       return {
         state: "FAILED",
         idempotencyKey: intent.idempotencyKey,
@@ -718,6 +789,7 @@ export class KeeperHubClient {
 
     if (policy.requireSimulationSuccess) {
       if (!token) {
+        this.trustLedger.recordBlocked("DRY_RUN_REQUIRED");
         return {
           state: "FAILED",
           idempotencyKey: intent.idempotencyKey,
@@ -729,6 +801,7 @@ export class KeeperHubClient {
 
       const ttl = policy.dryRunTtlMs ?? 60_000;
       if (Date.now() > token.issuedAt + ttl) {
+        this.trustLedger.recordBlocked("DRY_RUN_TOKEN_EXPIRED");
         return {
           state: "FAILED",
           idempotencyKey: intent.idempotencyKey,
@@ -740,6 +813,7 @@ export class KeeperHubClient {
 
       const currentHash = computeCheckAndExecuteIntentHash(intent);
       if (token.intentHash !== currentHash) {
+        this.trustLedger.recordBlocked("DRY_RUN_INTENT_MISMATCH");
         return {
           state: "FAILED",
           idempotencyKey: intent.idempotencyKey,
@@ -768,12 +842,15 @@ export class KeeperHubClient {
 
     if (result.state === "CONFIRMED") {
       this.circuitBreaker.recordSuccess();
+      this.trustLedger.recordConfirmed();
       this.firewall.recordSpend(intent.action.value ?? 0n);
       this.activeDryRunTokens.delete(intent.dryRunTokenId);
     } else if (result.state === "FAILED") {
       this.circuitBreaker.recordFailure(result.revertReason || result.error);
+      this.trustLedger.recordFailed();
     } else if (result.state === "UNKNOWN") {
       this.circuitBreaker.recordUnknown(result.error);
+      this.trustLedger.recordUnknown();
     }
 
     return result;

@@ -8,6 +8,7 @@ import {
   CheckAndExecuteExecuteActionSchema,
   ProtocolActionSchema,
   GetSpendingLimitsActionSchema,
+  GetTrustSummaryActionSchema,
   TempoSignAndHoldActionSchema,
   TempoReleaseHoldActionSchema,
   TempoCancelHoldActionSchema,
@@ -446,6 +447,35 @@ export function createDaydreamsActions(client: KeeperHubClient) {
     },
   };
 
+  const getTrustSummaryAction: DaydreamsActionDefinition<
+    typeof GetTrustSummaryActionSchema,
+    any
+  > = {
+    name: "keeperhub_get_trust_summary",
+    description:
+      "Read this agent's own self-reported firewall-block and execution-outcome history: how many " +
+      "actions were blocked and why, how many real executions confirmed/failed/came back indeterminate, " +
+      "and the circuit breaker's current state. This is a local, locally-persisted record this client " +
+      "keeps about itself — it is NOT hosted, NOT cryptographically attested, and NOT reachable by a " +
+      "counterparty unless they have direct access to this same running instance. Read-only; takes no " +
+      "parameters.",
+    schema: GetTrustSummaryActionSchema,
+    handler: async () => {
+      logger.info("Executing keeperhub_get_trust_summary tool call");
+
+      const summary = client.getTrustSummary();
+      return {
+        circuitBreakerState: summary.circuitBreakerState,
+        totalBlockedAttempts: summary.totalBlockedAttempts,
+        blockedByReason: summary.blockedByReason,
+        totalConfirmedExecutions: summary.totalConfirmedExecutions,
+        totalFailedExecutions: summary.totalFailedExecutions,
+        totalUnknownExecutions: summary.totalUnknownExecutions,
+        trackingSince: summary.trackingSince,
+      };
+    },
+  };
+
   const tempoSignAndHoldAction: DaydreamsActionDefinition<
     typeof TempoSignAndHoldActionSchema,
     any
@@ -583,6 +613,7 @@ export function createDaydreamsActions(client: KeeperHubClient) {
     checkAndExecuteAction,
     protocolActionAction,
     getSpendingLimitsAction,
+    getTrustSummaryAction,
     tempoSignAndHoldAction,
     tempoReleaseHoldAction,
     tempoCancelHoldAction,

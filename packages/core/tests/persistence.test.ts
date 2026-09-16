@@ -104,10 +104,13 @@ describe("Opt-in file-backed persistence (KeeperHubClientOptions.persistDir)", (
       params: {},
     });
     expect(trippedResult.error).toContain("CIRCUIT_BREAKER_OPEN");
+    expect(failingClient.getTrustSummary().totalFailedExecutions).toBe(3);
 
     // 4. Yet another fresh instance, same persistDir, simulating a second
     // process restart — the circuit breaker must still be OPEN, recovered
-    // from circuit-breaker.json rather than starting CLOSED.
+    // from circuit-breaker.json rather than starting CLOSED, and the trust
+    // ledger's failure count must also survive, recovered from
+    // trust-ledger.json rather than resetting to 0.
     const clientC = new KeeperHubClient(
       { mode: "mock", policy },
       { transport: new MockKeeperHubTransport(), persistDir: dir },
@@ -118,6 +121,7 @@ describe("Opt-in file-backed persistence (KeeperHubClientOptions.persistDir)", (
       params: {},
     });
     expect(blockedResult.error).toContain("CIRCUIT_BREAKER_OPEN");
+    expect(clientC.getTrustSummary().totalFailedExecutions).toBe(3);
   });
 
   it("refuses to release a paymentId not recovered from disk (unrelated persistDir)", async () => {

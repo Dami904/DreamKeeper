@@ -472,6 +472,8 @@ export const AuditActionSchema = z.object({
 
 export const GetSpendingLimitsActionSchema = z.object({});
 
+export const GetTrustSummaryActionSchema = z.object({});
+
 export const TempoSignAndHoldActionSchema = z.object({
   idempotencyKey: z
     .string()

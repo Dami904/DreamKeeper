@@ -45,6 +45,7 @@ export function dreamkeeperExtension(
     actionsMap.checkAndExecuteAction,
     actionsMap.protocolActionAction,
     actionsMap.getSpendingLimitsAction,
+    actionsMap.getTrustSummaryAction,
     actionsMap.tempoSignAndHoldAction,
     actionsMap.tempoReleaseHoldAction,
     actionsMap.tempoCancelHoldAction,
