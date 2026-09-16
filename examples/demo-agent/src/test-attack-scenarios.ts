@@ -206,8 +206,45 @@ async function runScenario(
   return false;
 }
 
+/** Waits for the user to press Enter before continuing — used by --step so
+ * a live recording can be paced by the narrator, not a fixed timer. Reuses
+ * one shared readline interface across every call: creating and closing a
+ * fresh one per pause can leave stdin in a state where a later call never
+ * receives further input. */
+let sharedReadline: import("node:readline/promises").Interface | undefined;
+
+async function waitForEnter(message: string): Promise<void> {
+  if (!sharedReadline) {
+    const { createInterface } = await import("node:readline/promises");
+    sharedReadline = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+  }
+  await sharedReadline.question(message);
+}
+
+/** Parses `--only 1,4,8` (1-based indices into `scenarios`) into a filtered
+ * list, preserving the requested order. Returns all scenarios if --only is
+ * absent or unparseable. */
+function selectScenarios(argv: string[]): Scenario[] {
+  const onlyIndex = argv.indexOf("--only");
+  if (onlyIndex === -1 || !argv[onlyIndex + 1]) {
+    return scenarios;
+  }
+  const indices = argv[onlyIndex + 1]!.split(",")
+    .map((s) => Number.parseInt(s.trim(), 10) - 1)
+    .filter((i) => Number.isInteger(i) && i >= 0 && i < scenarios.length);
+  if (indices.length === 0) {
+    return scenarios;
+  }
+  return indices.map((i) => scenarios[i]!);
+}
+
 async function main() {
   const isLive = process.argv.includes("--live");
+  const stepMode = process.argv.includes("--step");
+  const selected = selectScenarios(process.argv);
 
   console.log(
     "\n===================================================================",
@@ -219,6 +256,11 @@ async function main() {
     "  given a different adversarial prompt per scenario and decides for",
   );
   console.log("  itself which KeeperHub tool to call, with what arguments.");
+  if (selected.length !== scenarios.length) {
+    console.log(
+      `  Running ${selected.length} of ${scenarios.length} scenarios: ${selected.map((s) => s.name).join(", ")}`,
+    );
+  }
   console.log(
     "===================================================================",
   );
@@ -233,10 +275,18 @@ async function main() {
   });
 
   const results: Array<{ name: string; passed: boolean }> = [];
-  for (const scenario of scenarios) {
+  for (let i = 0; i < selected.length; i++) {
+    const scenario = selected[i]!;
     const passed = await runScenario(openrouter, scenario, isLive);
     results.push({ name: scenario.name, passed });
+
+    if (stepMode && i < selected.length - 1) {
+      await waitForEnter(
+        "\n>>> Press Enter to run the next scenario (Ctrl+C to stop here)...\n",
+      );
+    }
   }
+  sharedReadline?.close();
 
   console.log(
     "\n===================================================================",
