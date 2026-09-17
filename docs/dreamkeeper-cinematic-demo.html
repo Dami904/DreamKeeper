@@ -471,25 +471,6 @@
         margin-top: 3px;
       }
 
-      .caption {
-        position: absolute;
-        left: 50%;
-        bottom: 68px;
-        z-index: 9;
-        width: min(900px, calc(100vw - 44px));
-        transform: translateX(-50%);
-        font-size: clamp(20px, 2.5vw, 34px);
-        font-weight: 820;
-        line-height: 1.18;
-      }
-
-      .caption span {
-        padding: 0.1em 0.28em;
-        background: rgba(0, 0, 0, 0.76);
-        box-decoration-break: clone;
-        -webkit-box-decoration-break: clone;
-      }
-
       .controls {
         position: absolute;
         left: 34px;
@@ -783,11 +764,6 @@
           bottom: 170px;
         }
 
-        .caption {
-          bottom: 72px;
-          font-size: 21px;
-        }
-
         .controls {
           left: 22px;
           right: 22px;
@@ -964,7 +940,6 @@
         </div>
       </section>
 
-      <div class="caption" aria-live="polite"><span></span></div>
       <nav class="controls" aria-label="Explainer controls">
         <div class="buttons">
           <button class="icon-button" type="button" data-prev aria-label="Previous scene" title="Previous scene">&lsaquo;</button>
@@ -978,7 +953,6 @@
 
     <script>
       const scenes = [...document.querySelectorAll(".scene")];
-      const caption = document.querySelector(".caption span");
       const label = document.querySelector("[data-scene-label]");
       const bar = document.querySelector(".bar span");
       const count = document.querySelector(".count");
@@ -992,7 +966,6 @@
         scenes.forEach((scene, sceneIndex) => {
           scene.classList.toggle("active", sceneIndex === index);
         });
-        caption.textContent = scenes[index].dataset.caption;
         label.textContent = scenes[index].dataset.label;
         bar.style.width = `${((index + 1) / scenes.length) * 100}%`;
         count.textContent = `${index + 1} / ${scenes.length}`;
