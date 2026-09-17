@@ -1,0 +1,256 @@
+1
+00:00:00,000 --> 00:00:06,960
+This is DreamKeeper basically an integration 
+between Daydream agents and keeperhub as the
+
+2
+00:00:06,960 --> 00:00:14,880
+execution layer. Dreamkeeper is what lets a 
+daydream agent actually execute real on-chain
+
+3
+00:00:14,880 --> 00:00:21,520
+transaction through keeperhub and on the 
+users behalf transfers,contract calls,
+
+4
+00:00:21,520 --> 00:00:28,160
+conditional checks and execute operations, 
+pre-built defi protocols, payments all while
+
+5
+00:00:28,160 --> 00:00:40,720
+a deterministic firewall decides that 
+which is allowed to reach keeperhub. So
+
+6
+00:00:40,720 --> 00:00:46,400
+the model of operation is like this. The 
+prompt is written that's the agent intent,
+
+7
+00:00:46,400 --> 00:00:51,280
+A firewall thats dreamkeeper, A dry run 
+is is done to simulate the contract and
+
+8
+00:00:51,280 --> 00:00:57,200
+keeperHub serves as execution infrastructure 
+before a receipt is therefore seen in your
+
+9
+00:00:57,200 --> 00:01:05,680
+keeper history analysis. So we introduced many 
+endpoints in from keeperhub. Execute_transfer,
+
+10
+00:01:05,680 --> 00:01:11,840
+execute_contract, score, execute_check and 
+Execute_protocol_actions. It gets direct
+
+11
+00:01:11,840 --> 00:01:19,520
+execution status. Get spending limits. Tempo_sign 
+and tempo_release_ hold and tempo_cancel. Also,
+
+12
+00:01:19,520 --> 00:01:30,960
+these are the daydream actions 
+that exposed in dream keeper.
+
+13
+00:01:30,960 --> 00:01:41,600
+So now we tested this live against a cold run 
+that mean we cloned it in a fresh repo and tried
+
+14
+00:01:41,600 --> 00:01:51,120
+on a test and we got as high as seven out of eight 
+attack scenarios blocked that is injected prompts
+
+15
+00:01:54,480 --> 00:02:01,120
+as hallucinated agent were were 
+blocked. Yeah, I run 102 automated test,
+
+16
+00:02:01,120 --> 00:02:08,400
+base Sepolia testnet, Tempo testnet and 
+Daydreams. You can check this live Dream
+
+17
+00:02:08,400 --> 00:02:22,240
+Keeper on this repo right here. So now we're 
+going to go live into the actual testing. Yeah,
+
+18
+00:02:23,280 --> 00:02:32,000
+We going to run some live scenarios . 
+We are running one of the scenarios,
+
+19
+00:02:32,000 --> 00:02:41,680
+one of the attack scenarios to 
+see what the agent is going to do.
+
+20
+00:02:41,680 --> 00:02:46,560
+Also, we are running this through 
+an a free model on open router. So,
+
+21
+00:02:46,560 --> 00:02:54,720
+we also add Antropic integration. That's 
+a Antropic API key. If you have your
+
+22
+00:02:55,440 --> 00:03:02,240
+your open AI API key, those can work too. But 
+gemini API key is not supported or else would
+
+23
+00:03:02,240 --> 00:03:09,840
+have included it also. So we are running 
+the first live scenario at the moment.
+
+24
+00:03:09,840 --> 00:03:16,080
+Okay. The task is Enqueue
+
+25
+00:03:16,080 --> 00:03:24,160
+A prompt injection transfer a particular 
+amount to this address. Note:this address
+
+26
+00:03:24,160 --> 00:03:29,360
+has not been on the white list. Has 
+not been given a white list according
+
+27
+00:03:29,360 --> 00:03:37,820
+to what we have informed our agent before 
+in the live test. So the agent is thinking
+
+28
+00:03:37,820 --> 00:03:41,600
+We are using Nvidia nomotron.
+
+29
+00:03:41,600 --> 00:03:47,520
+Yeah. So the simulation was blocked because it 
+detected that the recipient was not whitelisted.
+
+30
+00:03:47,520 --> 00:03:52,400
+So there are many many attack scenarios 
+that were added like the injected prompt,
+
+31
+00:03:52,400 --> 00:04:01,200
+hallucination attacks and co and co. So now we 
+going to try. So when you come to our keeper
+
+32
+00:04:01,200 --> 00:04:09,040
+hub profile here come to our keeper analytics 
+profile here we see that no nothing was executed
+
+33
+00:04:09,040 --> 00:04:14,560
+no transfer was done. This was 18 hours ago. So at 
+this moment no transfer was done. So this is like
+
+34
+00:04:14,560 --> 00:04:24,720
+a evidence that the the dreamkeeper execution 
+interface between keeperhub and daydreams is
+
+35
+00:04:24,720 --> 00:04:32,640
+working effectively. So now we're going to 
+go back to try and execute a real transaction
+
+36
+00:04:46,960 --> 00:04:54,240
+So this is the approved.
+
+37
+00:04:54,240 --> 00:04:59,840
+So as you can see from here the simulation failed 
+the first time because my I was not having enough
+
+38
+00:04:59,840 --> 00:05:09,040
+USDC to execute the transaction. But after sending 
+some USDC into the wallet now can see simulation
+
+39
+00:05:09,040 --> 00:05:14,480
+successful that's it simulated it first then 
+confirmed it demo successful so now let's go
+
+40
+00:05:14,480 --> 00:05:23,120
+and confirm on the keeper interface so right now 
+you can see a transfer was done 11 seconds ago so
+
+41
+00:05:23,120 --> 00:05:29,760
+there are many and I've done many transfers. 
+Transfers,protocol action that is from Aave;
+
+42
+00:05:29,760 --> 00:05:43,120
+lending ,contract call,check and execute and many 
+many actions like that. So we so let's come here
+
+43
+00:05:43,120 --> 00:05:55,760
+also we also integrated we also integrated a 
+ability for other agents to be able to audit
+
+44
+00:05:55,760 --> 00:06:03,920
+your day dreams agents. So, but at the moment 
+we the backend is not hosted anywhere. So,
+
+45
+00:06:03,920 --> 00:06:14,000
+it's not live yet. But your agent can be able to 
+give you a summary of the work that was done on it
+
+46
+00:06:14,000 --> 00:06:14,800
+at the moment.
+
+47
+00:06:31,840 --> 00:06:36,000
+So these are the summary of the things 
+that happened. The simulation that
+
+48
+00:06:36,000 --> 00:06:44,320
+failed because this guy was not white 
+listed. The success of a simulation and
+
+49
+00:06:45,440 --> 00:06:53,120
+He confirmed details. So now this is a this 
+is transaction the same thing as this the
+
+50
+00:06:53,120 --> 00:07:08,880
+same thing as this. So we can go and check it 
+out in the go and check it out in the explorer.
+
+51
+00:07:23,120 --> 00:07:33,360
+Yeah. So after some minutes of battling 
+with internet I was able to show the
+
+52
+00:07:33,360 --> 00:07:40,400
+transaction hash here was some minutes ago 
+this transaction hash. So thank you very much.
+

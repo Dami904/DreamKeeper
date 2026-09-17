@@ -20,7 +20,11 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 
 ## Watch the demo
 
-> **[ PLACEHOLDER — no video has been recorded yet. ]** A walkthrough video is planned but not yet produced; do not link or embed one here until it exists. Until then, the [core proof](#the-core-proof) section below is real, captured terminal output from an actual run — not a mockup — and is the strongest currently-available evidence.
+**DEMO VIDEO:** [https://youtu.be/odduoTIIn2k](https://youtu.be/odduoTIIn2k) — same video, hosted on YouTube.
+
+https://github.com/Dami904/DreamKeeper/raw/main/docs/dreamkeeper-demo.mp4
+
+Captions are burned into the video. A plain-text transcript is also available at [`docs/dreamkeeper-demo.srt`](docs/dreamkeeper-demo.srt). Everything shown is live execution against real KeeperHub on Base Sepolia and Tempo Testnet — see [the core proof](#the-core-proof) below for the same evidence as captured terminal output, and the [verified transaction ledger](#verified-transaction-ledger) for every tx hash independently checked against its own chain's RPC.
 
 ---
 
