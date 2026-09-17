@@ -3,7 +3,7 @@
 # DreamKeeper
 
 [![CI](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml/badge.svg)](https://github.com/Dami904/DreamKeeper/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-94%20passing-22C55E?style=flat)](packages/core/tests)
+[![Tests](https://img.shields.io/badge/tests-102%20passing-22C55E?style=flat)](packages/core/tests)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Live](https://img.shields.io/badge/network-Base%20Sepolia-8A2BE2?style=flat)](https://sepolia.basescan.org)
 [![Stack](https://img.shields.io/badge/KeeperHub-MCP%20%7C%20Turnkey-orange?style=flat)](https://docs.keeperhub.com)
@@ -30,7 +30,7 @@ When an autonomous AI agent decides to move funds, a single hallucination, promp
 
 | Metric                 |   Verified Value    | What This Means                                                  |
 | ---------------------- | :-----------------: | ---------------------------------------------------------------- |
-| **Test Suite**         | **94 / 94 passing** | Unit, integration, and property-based tests, zero network calls  |
+| **Test Suite**         | **102 / 102 passing** | Unit, integration, and property-based tests, zero network calls  |
 | **Secrets Needed**     |  **$0.00 / Zero**   | A cold clone verifies 100% of claims with zero API keys          |
 | **Execution States**   |    **3 States**     | `CONFIRMED`, `FAILED`, and `UNKNOWN` (with idempotent reconcile) |
 | **Simulation TTL**     |   **60 Seconds**    | Cryptographic tokens prevent execution against stale liquidity   |
@@ -367,7 +367,7 @@ dreamkeeper/
 │       │   ├── daydreams/         # Native Daydreams actions & extension wrapper
 │       │   ├── logger/            # Structured JSON logger (zero external dependencies)
 │       │   └── types/             # Strict TypeScript definitions & Zod schemas
-│       └── tests/                 # 94 unit, invariant, and guardrail tests
+│       └── tests/                 # 102 unit, invariant, and guardrail tests
 ├── examples/
 │   └── demo-agent/                # Showcase Daydreams agent
 │       └── src/
@@ -435,11 +435,11 @@ pnpm demo:native-compat
 ## Tests
 
 ```bash
-# Run all 94 tests with Vitest
+# Run all 102 tests with Vitest
 pnpm test
 ```
 
-_Note on test integrity: All 94 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
+_Note on test integrity: All 102 tests run against the deterministic `MockKeeperHubTransport` (or a local-only `OnChainKeeperHubTransport` instance that never touches a real RPC) with simulated on-chain forks, zero network latency, and zero private keys. No test requires secrets, API keys, or live network access._
 
 **A separate, opt-in check against the real API.** No KeeperHub tool documents its response schema anywhere (verified — checked both `tools_documentation` and the raw JSON schema for every simulate-capable tool). That means a silent field rename on KeeperHub's side would only surface as a live bug in production, exactly like the real `gasEstimate` field-name mismatch this project hit and fixed (see above). `scripts/verify-api-contract.mjs` (`pnpm live:verify-contract`) turns that risk into a repeatable check: it calls all seven of DreamKeeper's real KeeperHub touchpoints and asserts the exact field names `LiveKeeperHubTransport` depends on are still there. It requires a real `KEEPERHUB_API_KEY`, so it isn't part of the zero-secret `pnpm test` suite — but every call it makes is a `simulate: true` request, a pure read, or a sign-and-hold immediately followed by a cancel, so it spends no gas and moves no value.
 

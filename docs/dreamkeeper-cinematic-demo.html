@@ -577,6 +577,80 @@
         margin: 0;
       }
 
+      .endpoint-panels {
+        position: absolute;
+        left: 6vw;
+        right: 6vw;
+        top: 44vh;
+        bottom: 150px;
+        z-index: 6;
+        display: flex;
+        gap: 20px;
+      }
+
+      .endpoint-col {
+        flex: 1;
+        min-width: 0;
+        padding: 14px 20px;
+        border: 1px solid rgba(244, 245, 251, 0.13);
+        background: rgba(7, 13, 9, 0.78);
+        backdrop-filter: blur(12px);
+        overflow-y: auto;
+      }
+
+      .endpoint-col h2 {
+        margin: 0 0 2px;
+        font-size: clamp(14px, 1.2vw, 18px);
+      }
+
+      .endpoint-col .endpoint-sub {
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .endpoint-row {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 4.5px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .endpoint-row:first-of-type {
+        border-top: 0;
+      }
+
+      .endpoint-row .endpoint-dot {
+        flex: none;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 10px rgba(32, 204, 101, 0.5);
+        transform: translateY(-1px);
+      }
+
+      .endpoint-row.internal .endpoint-dot {
+        background: var(--blue);
+        box-shadow: 0 0 10px rgba(142, 184, 255, 0.5);
+      }
+
+      .endpoint-row code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: clamp(11px, 0.95vw, 13px);
+        color: var(--white);
+      }
+
+      .endpoint-row .endpoint-note {
+        margin-left: auto;
+        padding-left: 10px;
+        color: var(--muted);
+        font-size: 11px;
+        text-align: right;
+        white-space: nowrap;
+      }
+
       @keyframes floorDrift {
         to {
           background-position: 0 64px, 64px 0;
@@ -671,7 +745,8 @@
         .terminal,
         .proof-grid,
         .network-card,
-        .close-card {
+        .close-card,
+        .endpoint-panels {
           left: 22px;
           right: 22px;
           width: auto;
@@ -684,6 +759,13 @@
         .terminal {
           bottom: 170px;
           min-height: 280px;
+        }
+
+        .endpoint-panels {
+          top: 46vh;
+          bottom: 170px;
+          flex-direction: column;
+          overflow-y: auto;
         }
 
         .proof-grid {
@@ -781,25 +863,45 @@
 
       <section
         class="scene"
-        data-label="03 / How it decides"
-        data-caption="Every intent passes the same ordered gate before anything touches a network."
+        data-label="03 / Surface"
+        data-caption="Nine real KeeperHub endpoints. Twelve Daydreams actions. Nothing hidden behind either."
       >
         <div class="copy">
-          <h1>Safety is a sequence, not a suggestion.</h1>
+          <h1>Every endpoint and action, named.</h1>
           <p class="body">
-            Address whitelist, spend caps, simulation token, TTL, intent binding, circuit breaker, and Tempo payment ownership checks run before execution.
+            Not a single wrapped call — the real KeeperHub tools on the left, every agent-facing action on the right.
           </p>
         </div>
-        <div class="terminal" aria-hidden="true">
-          <p class="blue">validateIntent(intent)</p>
-          <p class="green">PASS address whitelist</p>
-          <p class="green">PASS per-transaction cap + 24h cap</p>
-          <p class="green">PASS method / protocol allowlist</p>
-          <p class="blue">validateExecution(intent, dryRunToken)</p>
-          <p class="green">PASS token present</p>
-          <p class="green">PASS token age &lt; 60 seconds</p>
-          <p class="green">PASS intent hash matches</p>
-          <p class="red">BLOCK unknown Tempo paymentId</p>
+        <div class="endpoint-panels" aria-hidden="true">
+          <div class="endpoint-col">
+            <h2>KeeperHub endpoints called</h2>
+            <p class="endpoint-sub">the real MCP tools, on the wire</p>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>execute_transfer</code><span class="endpoint-note">transfer</span></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>execute_contract_call</code><span class="endpoint-note">contract call</span></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>execute_check_and_execute</code><span class="endpoint-note">conditional action</span></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>execute_protocol_action</code><span class="endpoint-note">curated DeFi</span></div>
+            <div class="endpoint-row internal"><span class="endpoint-dot"></span><code>get_direct_execution_status</code><span class="endpoint-note">internal poll</span></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>get_spending_limits</code><span class="endpoint-note">org-level cap</span></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>tempo_sign_and_hold</code><span class="endpoint-note">Tempo</span></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>tempo_release_hold</code><span class="endpoint-note">Tempo</span></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>tempo_cancel_hold</code><span class="endpoint-note">Tempo</span></div>
+          </div>
+          <div class="endpoint-col">
+            <h2>Daydreams actions exposed</h2>
+            <p class="endpoint-sub">what the agent can actually call</p>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_dry_run</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_execute</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_reconcile</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_get_audit</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_check_and_execute_dry_run</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_check_and_execute</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_protocol_action</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_get_spending_limits</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_get_trust_summary</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_tempo_sign_and_hold</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_tempo_release_hold</code></div>
+            <div class="endpoint-row"><span class="endpoint-dot"></span><code>keeperhub_tempo_cancel_hold</code></div>
+          </div>
         </div>
       </section>
 
@@ -817,7 +919,7 @@
         <div class="proof-grid" aria-hidden="true">
           <div class="proof"><b>7 / 8</b><span>attack scenarios live-verified blocked</span></div>
           <div class="proof"><b>0</b><span>false negatives across fired tool calls</span></div>
-          <div class="proof"><b>94</b><span>secret-free automated tests</span></div>
+          <div class="proof"><b>102</b><span>secret-free automated tests</span></div>
           <div class="proof"><b>cold</b><span>clone re-verified against chain RPC</span></div>
         </div>
       </section>
