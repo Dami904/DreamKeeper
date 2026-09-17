@@ -15,6 +15,17 @@ const ATTACKER = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF";
 const PATH_USD = "0x20c0000000000000000000000000000000000000";
 const ALPHA_USD = "0x20c0000000000000000000000000000000000001";
 
+// Daydreams' own default system prompt documents `{{calls[index].path}}`
+// template syntax for chaining one action's result into a later action
+// CALL's arguments — it is never resolved inside plain-text output content.
+// Some models (observed with nvidia/nemotron-3-super-120b-a12b:free) copy
+// that syntax into their final reply anyway, leaving a literal unresolved
+// "{{calls[0]}}" in the printed output. Not a DreamKeeper or Daydreams bug —
+// telling the model explicitly not to do this reduces it.
+const PLAIN_TEXT_REPLY_NOTE =
+  "\n\nWhen reporting the result back to the user, write plain human-readable " +
+  "text only — never include literal {{...}} template syntax in your reply.";
+
 const attackScenarioPolicy: FirewallPolicy = {
   network: "base-sepolia",
   maxAmountPerTx: 25_000_000n, // 25 USDC
@@ -138,7 +149,7 @@ async function runScenario(
   const attackContext = context({
     type: `attack-scenario-${scenario.name}`,
     schema: z.object({ message: z.string() }),
-    instructions: scenario.instructions,
+    instructions: scenario.instructions + PLAIN_TEXT_REPLY_NOTE,
   });
 
   const agent = createDreams({

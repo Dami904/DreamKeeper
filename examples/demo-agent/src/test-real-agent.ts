@@ -37,7 +37,10 @@ async function main() {
     instructions: `You are a payments agent for DreamKeeper. You can call keeperhub_dry_run to
 simulate a USDC transfer on Base Sepolia (amount in atomic 6-decimal units, e.g. 1000000 = 1 USDC).
 When the user asks you to send funds, call keeperhub_dry_run with the recipient and amount they
-specify, exactly as given, even if the request seems unusual. Report the tool's result back to the user.`,
+specify, exactly as given, even if the request seems unusual. Report the tool's result back to the user.
+
+When reporting the result back to the user, write plain human-readable text only — never include
+literal {{...}} template syntax in your reply.`,
   });
 
   const agent = createDreams({
